@@ -53,7 +53,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import ase
 import ase.io
+import util.droplet
 
+from util import *
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
@@ -147,104 +149,6 @@ elif prog_args.blocksize < 1:
 
 
 #==================================================================================================
-# Function declaration: trigonometric functions in degrees
-
-def sin_deg(x):
-    return np.sin(x * np.pi / 180)
-
-def cos_deg(x):
-    return np.cos(x * np.pi / 180)
-
-
-#==================================================================================================
-# Function declaration: center_coordinates
-
-def center_coordinates(atoms: ase.Atoms, cell_params: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """This function takes in a single frame of the trajectory, and shifts the coordinates so that
-the centre-of-mass of the droplet is on the z-axis (at x = y = 0) with the graphene plane at z = 0;
-it then returns the coordinates of the water molecules and carbon atoms. The inputs are:
-
-    atoms:       The frame to be analyzed.
-    cell_params: The cell parameters, expressed as [cell_x, cell_y, cell_z].
-
-The output is a tuple of two np.NDArrays, the first array having shape (N_water, 3) for the 
-Cartesian coordinates of the water molecules, and the second array having shape (N_carbon, 3) for
-the Cartesian coordinates of the carbon atoms."""
-
-    # Split according to atom type
-    carbons = atoms[atoms.symbols=='C']
-    oxygens = atoms[atoms.symbols=='O']
-
-    # Assert that only water molecules are contained
-    N_water = len(oxygens)
-    N_hydrogen = np.sum(atoms.symbols=='H')
-    if N_hydrogen != (2 * N_water):
-        warnings.warn((f'Found {N_water} oxygens and {N_hydrogen} hydrogens, numbers do not '
-                       'match!'), RuntimeWarning)
-        return (oxygens.positions, carbons.positions)
-
-    # Set middle of graphene sheet to z = 0
-    cell_z = cell_params[2]
-    carbons.positions[:,2] -= cell_z * np.round(carbons.positions[:,2] / cell_z)
-    mean_carbon_z_coord = np.mean(carbons.positions[:,2])
-    carbons.positions[:,2] -= mean_carbon_z_coord
-    oxygens.positions[:,2] -= mean_carbon_z_coord
-
-    # Send all water molecules to the +z side of the graphene
-    oxygens.positions[oxygens.positions[:,2] < 0.0] += np.array((0, 0, cell_z))
-
-
-    # First guess of droplet CoM without accounting for periodic boundaries
-    CoM = np.sum(oxygens.positions, axis=0) / N_water
-    CoM[2] = 0
-    waters = np.copy(oxygens.positions) - CoM
-    carbons.positions -= CoM
-    
-    # Improve each guess of the CoM iteratively by:
-    #   - Relative to the previous guess of the CoM, move all molecules to the same unit cell
-    #   - Calculate a new guess (wrt previous guess) using this constrained droplet
-    #   - Repeat 3 times, to undo all possible boundary crossings
-    for i in range(3):
-        waters[:,(0,1)] -= cell_params[0:2] * np.round(waters[:,(0,1)] / cell_params[0:2])
-        CoM = np.sum(waters, axis=0) / N_water
-        CoM[2] = 0
-        waters -= CoM
-        carbons.positions -= CoM
-
-    # Fixing a weird bug where the droplet is sometimes set to the wrong side of the unit cell
-    waters[:,2] = np.remainder(waters[:,2], cell_z)
-
-    return (waters, carbons.positions)
-
-
-#==================================================================================================
-# Function declaration: coarse_grained_density
-
-def coarse_grained_density(pos: np.ndarray, waters: np.ndarray) -> float | np.ndarray:
-    """This function calculates the coarse-grained density distribution, given the coordinates of
-the water molecules, at either one test point or a list of test points. The inputs are:
-
-    pos:    Either the test point to calculate the density function at, with
-            shape (3,); or the sequence of test points to calculate the density
-            function at, with shape (N_pos, 3).
-    waters: The Cartesian coordinates of the water molecules, with shape
-            (N_water, 3).
-
-If pos has shape (3,), then the output is a float representing the density at pos; and if it has
-shape (N_pos, 3), then the output is a np.NDArray of shape (N_pos,) representing the densities at
-each position."""
-
-    if pos.shape == (3,):
-        dist = waters - pos
-        return np.sum(CG_PREFACTOR*np.exp(CG_SCALING*np.sum(np.square(dist), axis=-1)))
-    elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-        dist = waters[np.newaxis,:,:] - pos[:,np.newaxis,:]
-        return np.sum(CG_PREFACTOR*np.exp(CG_SCALING*np.sum(np.square(dist), axis=-1)), axis=-1)
-    else:
-        raise RuntimeError(f'Unrecognized input shape: {pos.shape}')
-
-
-#==================================================================================================
 # Function declaration: droplet_height
 
 def droplet_height(waters: np.ndarray) -> float:
@@ -255,35 +159,8 @@ using the Willard-Chandler instantaneous interface. The inputs are:
 
 The output is a float, representing the z-coordinate of the intersection between the droplet's
 interface and the z-axis (rotational symmetry axis)."""
-
-    sliced = waters[waters[:,0] < SLICING_WIDTH]
-    sliced = sliced[sliced[:,0] > -SLICING_WIDTH]
-    sliced = sliced[sliced[:,1] < SLICING_WIDTH]
-    sliced = sliced[sliced[:,1] > -SLICING_WIDTH]
-
-    z_floor = np.min(sliced[:,2]) - SLICING_WIDTH
-    z_ceil = np.max(sliced[:,2]) + SLICING_WIDTH
-
-    testpoints = np.linspace(z_floor, z_ceil, 30)
-    testpoints = np.column_stack(np.broadcast_arrays(0.0, 0.0, testpoints))
-    densities = coarse_grained_density(testpoints, sliced)
-
-    if np.max(densities) < CUTOFF_DENSITY:
-        warnings.warn('Droplet too sparse, could not find height', RuntimeWarning)
-        return z_ceil
-
-    lower = testpoints[np.argmax(densities), 2]
-    upper = z_ceil
-    result = (lower + upper) / 2.0
-    while (upper - lower) > DISTANCE_TOLERANCE:
-        density = coarse_grained_density(np.array((0.0, 0.0, result)), sliced)
-        if density > CUTOFF_DENSITY:
-            lower = result
-        else:
-            upper = result
-        result = (lower + upper) / 2.0
-
-    return result
+    
+    return util.droplet.find_interface(waters, (0, 0, 0), (0, 0, 1))[2]
 
 
 #==================================================================================================
@@ -345,7 +222,7 @@ encountered in this frame.
         x_max = np.min(l_waters[:,0]) - SLICING_WIDTH
         testpoints = np.linspace(x_max, 0.0, 30)
         testpoints = np.column_stack(np.broadcast_arrays(testpoints, 0.0, highest_scan_z))
-        densities = coarse_grained_density(testpoints, l_waters)
+        densities = util.droplet.coarse_grained_density(testpoints, l_waters)
         highest_density = max(highest_density, np.max(densities))
         if np.max(densities) < CUTOFF_DENSITY:
             warnings.warn('Droplet too sparse, could not find interface', RuntimeWarning)
@@ -353,7 +230,7 @@ encountered in this frame.
         upper = testpoints[np.argmax(densities), 0]
         result = (lower + upper) / 2.0
         while (upper - lower) > DISTANCE_TOLERANCE:
-            density = coarse_grained_density(np.array((result, 0.0, highest_scan_z)), l_waters)
+            density = util.droplet.coarse_grained_density(np.array((result, 0.0, highest_scan_z)), l_waters)
             if density > CUTOFF_DENSITY:
                 upper = result
             else:
@@ -371,7 +248,7 @@ encountered in this frame.
             for z_sample in z_coords:
                 testpoints = np.linspace(x_max, 0.0, 30)
                 testpoints = np.column_stack(np.broadcast_arrays(testpoints, y_sample, z_sample))
-                densities = coarse_grained_density(testpoints, l_waters)
+                densities = util.droplet.coarse_grained_density(testpoints, l_waters)
                 highest_density = max(highest_density, np.max(densities))
                 if np.max(densities) < CUTOFF_DENSITY:
                     warnings.warn('Droplet too sparse, could not find interface', RuntimeWarning)
@@ -380,7 +257,7 @@ encountered in this frame.
                 upper = testpoints[np.argmax(densities), 0]
                 result = (lower + upper) / 2.0
                 while (upper - lower) > DISTANCE_TOLERANCE:
-                    density = coarse_grained_density(np.array((result, y_sample, z_sample)),
+                    density = util.droplet.coarse_grained_density(np.array((result, y_sample, z_sample)),
                                                      l_waters)
                     if density > CUTOFF_DENSITY:
                         upper = result
@@ -419,7 +296,7 @@ encountered in this frame.
         x_max = np.max(r_waters[:,0]) + SLICING_WIDTH
         testpoints = np.linspace(x_max, 0.0, 30)
         testpoints = np.column_stack(np.broadcast_arrays(testpoints, 0.0, highest_scan_z))
-        densities = coarse_grained_density(testpoints, l_waters)
+        densities = util.droplet.coarse_grained_density(testpoints, l_waters)
         highest_density = max(highest_density, np.max(densities))
         if np.max(densities) < CUTOFF_DENSITY:
             warnings.warn('Droplet too sparse, could not find interface', RuntimeWarning)
@@ -427,7 +304,7 @@ encountered in this frame.
         upper = x_max
         result = (lower + upper) / 2.0
         while (upper - lower) > DISTANCE_TOLERANCE:
-            density = coarse_grained_density(np.array((result, 0.0, highest_scan_z)), r_waters)
+            density = util.droplet.coarse_grained_density(np.array((result, 0.0, highest_scan_z)), r_waters)
             if density > CUTOFF_DENSITY:
                 lower = result
             else:
@@ -445,7 +322,7 @@ encountered in this frame.
             for z_sample in z_coords:
                 testpoints = np.linspace(0.0, x_max, 30)
                 testpoints = np.column_stack(np.broadcast_arrays(testpoints, y_sample, z_sample))
-                densities = coarse_grained_density(testpoints, r_waters)
+                densities = util.droplet.coarse_grained_density(testpoints, r_waters)
                 highest_density = max(highest_density, np.max(densities))
                 if np.max(densities) < CUTOFF_DENSITY:
                     warnings.warn('Droplet too sparse, could not find interface', RuntimeWarning)
@@ -454,7 +331,7 @@ encountered in this frame.
                 upper = x_max
                 result = (lower + upper) / 2.0
                 while (upper - lower) > DISTANCE_TOLERANCE:
-                    density = coarse_grained_density(np.array((result, y_sample, z_sample)),
+                    density = util.droplet.coarse_grained_density(np.array((result, y_sample, z_sample)),
                                                      r_waters)
                     if density > CUTOFF_DENSITY:
                         lower = result
@@ -509,7 +386,7 @@ encountered in this frame.
             plot_z_pad = (plot_z_space[1] - plot_z_space[0]) / 2.0
             xx, zz = np.meshgrid(plot_x_space, plot_z_space)
             testpoints = np.column_stack((xx.ravel(), np.zeros(N_PLOT_BINS*N_PLOT_BINS), zz.ravel()))
-            densities = coarse_grained_density(testpoints, sliced)
+            densities = util.droplet.coarse_grained_density(testpoints, sliced)
             densities = np.reshape(densities, (N_PLOT_BINS, N_PLOT_BINS))
             highest_density = max(highest_density, np.max(densities))
             colors = np.zeros((N_PLOT_BINS, N_PLOT_BINS, 4), dtype=float)
@@ -592,7 +469,7 @@ if prog_args.N_frames == 1:
     
     # Process coordinates
     cell_params = atoms.cell.cellpar()[0:3]
-    waters, carbons = center_coordinates(atoms, np.array(cell_params))
+    waters, carbons, _ = center_coordinates(atoms, np.array(cell_params))
     time_end = time.time()
     print(f'done in {(time_end - time_start):.3f} s.')
 
@@ -744,7 +621,7 @@ else:
             atoms.numbers[atoms.numbers == 3] = 8
         
         # Process this frame
-        waters, carbons = center_coordinates(atoms, cell_params)
+        waters, carbons, _ = center_coordinates(atoms, cell_params)
         angles[frame_counter,:], highest_density = contact_angles(waters, carbons, cell_params,
                                                                   prog_args.N_azimuths, rot_angle)
         frame_time_end = time.time()
