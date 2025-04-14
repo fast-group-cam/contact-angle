@@ -1,0 +1,165 @@
+from .coarse_grain import *
+import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.artist import Artist
+
+def plot_density_xz_slice(
+        waters: np.ndarray,
+        carbons: np.ndarray,
+        axis: Axes,
+        n_plot_bins: int = 80,
+        show_interface: bool = False, *,
+        coarse_grain_length: float = COARSE_GRAIN_LENGTH,
+        cutoff_density: float = CUTOFF_DENSITY,
+        bulk_density: float = BULK_DENSITY,
+        slicing_cutoff: float = SLICING_CUTOFF,
+        color_carbon: tuple[float, float, float] | str = (0.6, 0.6, 0.6),
+        color_inter: tuple[float, float, float] | str = (1.0, 0.0, 1.0)
+        ) -> tuple[Artist, ...]:
+    """Plots the coarse-grained density distribution, taken along the xz slice (assuming the
+droplet has been centered). The inputs are:
+
+    - `waters`: The Cartesian coordinates of the water molecules.
+    - `carbons`: The Cartesian coordinates of the carbon atoms.
+    - `axis`: The MatPlotLib Axes object to render to.
+    - `n_plot_bins`: The number of plotting bins to divide each direction of space up into.
+    - `show_interface`: Whether to display the Willard-Chandler interface.
+
+All other keyworded arguments either affect the colours used on the plot (N.B. the density
+distribution itself will always be shown in blue -- this cannot be changed), or are derived from
+the `coarse_grain` module and thus affect the calculation of the density function.
+
+This function returns the tuple of Artists involved with the plot, which can be used by
+`update_density_xz_slice` to update the plot."""
+
+    # Pre-slice sampling space
+    slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
+    sliced = waters[waters[:,1] < slice_width]
+    sliced = sliced[sliced[:,1] > -slice_width]
+    carbon_slice = carbons[carbons[:,1] < slice_width]
+    carbon_slice = carbon_slice[carbon_slice[:,1] > - slice_width]
+
+    # Find droplet height and CoM
+    droplet_h = find_interface(sliced, (0, 0, 0), (0, 0, 1))[2]
+    droplet_CoM = np.mean(sliced, axis=0)
+
+    # Find interface points
+    inter_pts = list()
+    search_angles = np.linspace(0, 2 * np.pi, (360 if show_interface else 2), endpoint=show_interface)
+    for angle in search_angles:
+        inter_pts.append(find_interface(sliced, droplet_CoM, (np.cos(angle), 0, np.sin(angle)),
+                                        coarse_grain_length=coarse_grain_length,
+                                        cutoff_density=cutoff_density,
+                                        slicing_cutoff=slicing_cutoff))
+    inter_pts = np.array(inter_pts)
+
+    # Calculate plot bounds
+    plot_x_min = 1.5 * np.min(inter_pts[:,0])
+    plot_x_max = 1.5 * np.max(inter_pts[:,0])
+    plot_z_min = min(np.min(carbon_slice[:,2]), np.min(sliced[:,2]))
+    plot_z_max = 1.5 * droplet_h
+
+    # Plot density function
+    plot_x_space = np.linspace(plot_x_min, plot_x_max, n_plot_bins)
+    plot_x_pad = (plot_x_space[1] - plot_x_space[0]) / 2.0
+    plot_z_space = np.linspace(plot_z_min, plot_z_max, n_plot_bins)
+    plot_z_pad = (plot_z_space[1] - plot_z_space[0]) / 2.0
+    xx, zz = np.meshgrid(plot_x_space, plot_z_space)
+    testpoints = np.column_stack((xx.ravel(), np.zeros(n_plot_bins*n_plot_bins), zz.ravel()))
+    densities = coarse_grained_density(testpoints, sliced, coarse_grain_length=coarse_grain_length)
+    densities = np.reshape(densities, (n_plot_bins, n_plot_bins))
+    colors = np.zeros((n_plot_bins, n_plot_bins, 4), dtype=float)
+    colors[:,:,0] = np.clip((densities / bulk_density) - 1.0, a_min=0.0, a_max=1.0)
+    colors[:,:,2] = np.clip(2.0 - (densities / bulk_density), a_min=0.0, a_max=1.0)
+    colors[:,:,3] = np.clip((densities / bulk_density), a_min=0.0, a_max=1.0)
+    art0 = axis.imshow(colors, origin='lower', extent=(plot_x_min - plot_x_pad,
+                                                       plot_x_max + plot_x_pad,
+                                                       plot_z_min - plot_z_pad,
+                                                       plot_z_max + plot_z_pad))
+
+    # Plot carbons
+    art1 = axis.plot(carbon_slice[:,0], carbon_slice[:,2], '.', color=color_carbon)[0]
+    axis.set_aspect('equal')
+
+    # Plot interface
+    if show_interface:
+        art2 = axis.plot(inter_pts[:,0], inter_pts[:,2], '-', color=color_inter)[0]
+        return (art0, art1, art2)
+    return (art0, art1)
+
+
+
+def update_density_xz_slice(
+        waters: np.ndarray,
+        carbons: np.ndarray,
+        artists: tuple[Artist, ...],
+        n_plot_bins: int = 80, *,
+        coarse_grain_length: float = COARSE_GRAIN_LENGTH,
+        cutoff_density: float = CUTOFF_DENSITY,
+        bulk_density: float = BULK_DENSITY,
+        slicing_cutoff: float = SLICING_CUTOFF,
+        color_carbon: tuple[float, float, float] | str = (0.6, 0.6, 0.6),
+        color_inter: tuple[float, float, float] | str = (1.0, 0.0, 1.0)
+        ) -> None:
+    """Updates the plot generated by `plot_density_xz_slice` using the new parameters passed in.
+    Useful for animations etc.."""
+
+    if len(artists) not in (2, 3):
+        raise RuntimeError(f'Wrong number of artists ({len(artists)}) supplied!')
+    show_interface = (len(artists) == 3)
+
+    # Pre-slice sampling space
+    slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
+    sliced = waters[waters[:,1] < slice_width]
+    sliced = sliced[sliced[:,1] > -slice_width]
+    carbon_slice = carbons[carbons[:,1] < slice_width]
+    carbon_slice = carbon_slice[carbon_slice[:,1] > - slice_width]
+
+    # Find droplet height and CoM
+    droplet_h = find_interface(sliced, (0, 0, 0), (0, 0, 1))[2]
+    droplet_CoM = np.mean(sliced, axis=0)
+
+    # Find interface points
+    inter_pts = list()
+    search_angles = np.linspace(0, 2 * np.pi, (360 if show_interface else 2), endpoint=show_interface)
+    for angle in search_angles:
+        inter_pts.append(find_interface(sliced, droplet_CoM, (np.cos(angle), 0, np.sin(angle)),
+                                        coarse_grain_length=coarse_grain_length,
+                                        cutoff_density=cutoff_density,
+                                        slicing_cutoff=slicing_cutoff))
+    inter_pts = np.array(inter_pts)
+
+    # Calculate plot bounds
+    plot_x_min = 1.5 * np.min(inter_pts[:,0])
+    plot_x_max = 1.5 * np.max(inter_pts[:,0])
+    plot_z_min = min(np.min(carbon_slice[:,2]), np.min(sliced[:,2]))
+    plot_z_max = 1.5 * droplet_h
+
+    # Plot density function
+    plot_x_space = np.linspace(plot_x_min, plot_x_max, n_plot_bins)
+    plot_x_pad = (plot_x_space[1] - plot_x_space[0]) / 2.0
+    plot_z_space = np.linspace(plot_z_min, plot_z_max, n_plot_bins)
+    plot_z_pad = (plot_z_space[1] - plot_z_space[0]) / 2.0
+    xx, zz = np.meshgrid(plot_x_space, plot_z_space)
+    testpoints = np.column_stack((xx.ravel(), np.zeros(n_plot_bins*n_plot_bins), zz.ravel()))
+    densities = coarse_grained_density(testpoints, sliced, coarse_grain_length=coarse_grain_length)
+    densities = np.reshape(densities, (n_plot_bins, n_plot_bins))
+    colors = np.zeros((n_plot_bins, n_plot_bins, 4), dtype=float)
+    colors[:,:,0] = np.clip((densities / bulk_density) - 1.0, a_min=0.0, a_max=1.0)
+    colors[:,:,2] = np.clip(2.0 - (densities / bulk_density), a_min=0.0, a_max=1.0)
+    colors[:,:,3] = np.clip((densities / bulk_density), a_min=0.0, a_max=1.0)
+    artists[0].set(data=colors, extent=(plot_x_min - plot_x_pad, plot_x_max + plot_x_pad,
+                                        plot_z_min - plot_z_pad, plot_z_max + plot_z_pad))
+
+    # Plot carbons
+    artists[1].set_xdata(carbon_slice[:,0])
+    artists[1].set_ydata(carbon_slice[:,2])
+    artists[1].set_color(color_carbon)
+
+    # Plot interface
+    if show_interface:
+        artists[2].set_xdata(inter_pts[:,0])
+        artists[2].set_ydata(inter_pts[:,2])
+        artists[2].set_color(color_inter)
+
+
