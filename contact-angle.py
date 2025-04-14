@@ -51,8 +51,10 @@ import matplotlib.pyplot as plt
 import ase
 import ase.io
 import util.droplet
+import util.droplet.plot
 
 from util import *
+from util.droplet.coarse_grain import COARSE_GRAIN_LENGTH, SLICING_CUTOFF, BULK_DENSITY
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
@@ -62,17 +64,7 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 #==================================================================================================
 # Script global constants
 
-COARSE_GRAIN_LENGTH = 2.4
-CUTOFF_DENSITY = 0.016
-CG_PREFACTOR = np.power(2 * np.pi, -1.5) * np.power(COARSE_GRAIN_LENGTH, -3)
-CG_SCALING = -0.5 / (COARSE_GRAIN_LENGTH**2)
-DISTANCE_TOLERANCE = 0.05
-
-SLICING_WIDTH = 2 * COARSE_GRAIN_LENGTH
-
 N_PLOT_BINS = 80
-BULK_DENSITY = 0.033368
-
 
 #==================================================================================================
 # Function declaration: contact_angles
@@ -105,6 +97,7 @@ encountered in this frame.
                            (0.0,                           0.0,                            1.0)))
     
     # Pre-calculate z-coordinate to search for each azimuthal slice
+    SLICING_WIDTH = SLICING_CUTOFF * COARSE_GRAIN_LENGTH
     z_floor = np.min(waters[:,2])
     droplet_thickness = droplet_h - z_floor
     highest_scan_z = z_floor + (0.2 * droplet_thickness)
@@ -171,36 +164,9 @@ encountered in this frame.
         # If available, plot diagram
         if (fig is not None) and (azi < len(axes)):
 
-            sliced = waters[waters[:,1] < SLICING_WIDTH]
-            sliced = sliced[sliced[:,1] > -SLICING_WIDTH]
-
-            # Calculate plot bounds
-            plot_x_min = 1.5 * l_inter[0]
-            plot_x_max = 1.5 * r_inter[0]
-            plot_z_min = min(np.min(carbon_slice[:,2]), np.min(sliced[:,2]))
-            plot_z_max = 1.5 * droplet_h
-
-            # Plot density function
-            plot_x_space = np.linspace(plot_x_min, plot_x_max, N_PLOT_BINS)
-            plot_x_pad = (plot_x_space[1] - plot_x_space[0]) / 2.0
-            plot_z_space = np.linspace(plot_z_min, plot_z_max, N_PLOT_BINS)
-            plot_z_pad = (plot_z_space[1] - plot_z_space[0]) / 2.0
-            xx, zz = np.meshgrid(plot_x_space, plot_z_space)
-            testpoints = np.column_stack((xx.ravel(), np.zeros(N_PLOT_BINS*N_PLOT_BINS), zz.ravel()))
-            densities = util.droplet.coarse_grained_density(testpoints, sliced)
-            densities = np.reshape(densities, (N_PLOT_BINS, N_PLOT_BINS))
-            highest_density = max(highest_density, np.max(densities))
-            colors = np.zeros((N_PLOT_BINS, N_PLOT_BINS, 4), dtype=float)
-            colors[:,:,0] = np.clip((densities / BULK_DENSITY) - 1.0, a_min=0.0, a_max=1.0)
-            colors[:,:,2] = np.clip(2.0 - (densities / BULK_DENSITY), a_min=0.0, a_max=1.0)
-            colors[:,:,3] = np.clip((densities / BULK_DENSITY), a_min=0.0, a_max=1.0)
-            axes[azi].imshow(colors, origin='lower', extent=(plot_x_min - plot_x_pad,
-                                                             plot_x_max + plot_x_pad,
-                                                             plot_z_min - plot_z_pad,
-                                                             plot_z_max + plot_z_pad))
-
-            # Plot carbons
-            axes[azi].plot(carbon_slice[:,0], carbon_slice[:,2], '.', color=(0.6, 0.6, 0.6))
+            # Plot density function, carbons, and full instantaneous interface
+            util.droplet.plot.plot_density_xz_slice(waters, carbon_slice, axes[azi],
+                                                    show_interface=True, color_inter=(1, 0, 1, 0.5))
 
             # Plot carbon planes
             point_a_x = l_carbon_c[0] - l_carbon_l
@@ -233,7 +199,8 @@ encountered in this frame.
             axes[azi].set_ylabel(r'z ($\AA$)')
             axes[azi].set_xlim(left=np.min(carbon_slice[:,0]) - COARSE_GRAIN_LENGTH,
                                right=np.max(carbon_slice[:,0]) + COARSE_GRAIN_LENGTH)
-            axes[azi].set_ylim(bottom=np.min(carbon_slice[:,2]) - COARSE_GRAIN_LENGTH, top=plot_z_max)
+            axes[azi].set_ylim(bottom=np.min(carbon_slice[:,2]) - COARSE_GRAIN_LENGTH,
+                               top=1.5 * droplet_h)
             axes[azi].set_aspect(1)
 
         # Rotate azimuthal slice

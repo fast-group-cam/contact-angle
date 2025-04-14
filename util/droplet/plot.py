@@ -13,8 +13,8 @@ def plot_density_xz_slice(
         cutoff_density: float = CUTOFF_DENSITY,
         bulk_density: float = BULK_DENSITY,
         slicing_cutoff: float = SLICING_CUTOFF,
-        color_carbon: tuple[float, float, float] | str = (0.6, 0.6, 0.6),
-        color_inter: tuple[float, float, float] | str = (1.0, 0.0, 1.0)
+        color_carbon: tuple[float, ...] | str = (0.6, 0.6, 0.6),
+        color_inter: tuple[float, ...] | str = (1.0, 0.0, 1.0)
         ) -> tuple[Artist, ...]:
     """Plots the coarse-grained density distribution, taken along the xz slice (assuming the
 droplet has been centered). The inputs are:

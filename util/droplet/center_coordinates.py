@@ -69,5 +69,8 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
     # Fixing a weird bug where the droplet is sometimes set to the wrong side of the unit cell
     oxygens[:,2] = np.remainder(oxygens[:,2], cell_z)
     hydrogens[:,2] = np.remainder(hydrogens[:,2], cell_z)
+    CoM_z = np.mean(oxygens[:,2])
+    oxygens[:,2] -= cell_z * np.round((oxygens[:,2] - CoM_z) / cell_z)
+    hydrogens[:,2] -= cell_z * np.round((hydrogens[:,2] - CoM_z) / cell_z)
 
     return (oxygens, carbons, hydrogens)
