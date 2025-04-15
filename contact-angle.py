@@ -62,11 +62,6 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 
 #==================================================================================================
-# Script global constants
-
-N_PLOT_BINS = 80
-
-#==================================================================================================
 # Function declaration: contact_angles
 
 def contact_angles(waters: np.ndarray, carbons: np.ndarray, N_azimuths: int, rot_angle: float,

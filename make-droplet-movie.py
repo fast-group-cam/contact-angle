@@ -1,14 +1,16 @@
 #! /usr/bin/env python
 
-#==================================================================================================
-# Python script which takes a trajectory of a water droplet on graphene, displays it in a custom
-# visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
-#
-#     python make-droplet-movie.py <input_file> [-o <output_file>] [--index <index>]
-#
-# The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the
-# simulation box lengths are fixed).
-#==================================================================================================
+prog_desc_header = '''
+===================================================================================================
+ Python script which takes a trajectory of a water droplet on graphene, displays it in a custom
+ visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
+
+     python make-droplet-movie.py <input_file> [-o <output_file>] [--index <index>]
+
+ The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the
+ simulation box lengths are fixed).
+===================================================================================================
+'''
 
 import os
 import argparse
@@ -31,9 +33,15 @@ if __name__ == "__main__":
     RADIUS_OXYGEN = 0.66
 
     #----------------------------------------------------------------------------------------------
-    # Parse input arguments
+    # Generate program description and parse input arguments
 
-    parser = argparse.ArgumentParser(prog='make-droplet-movie.py')
+    prog_desc = ''
+    for line in prog_desc_header.splitlines()[2:-1]:
+        prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
+    
+    parser = argparse.ArgumentParser(prog='make-droplet-movie', description=prog_desc,
+                                     usage='%(prog)s filename [options]',
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_file')
     parser.add_argument('-o', '--output', default='movie.mp4')
     parser.add_argument('--index', default=':')
