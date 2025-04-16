@@ -32,6 +32,6 @@ Note that this ordering of axes contradicts MatPlotLib's imshow axes, so np.swap
 should be used when generating plots via imshow etc.."""
 
     N_x, N_y = cast_to_gridsize(N)
-    x_coords = np.linspace(-0.5 * cell_xy[0], 0.5 * cell_xy[0], N_x) + (cell_xy[0]/N_x)
-    y_coords = np.linspace(-0.5 * cell_xy[1], 0.5 * cell_xy[1], N_y) + (cell_xy[1]/N_y)
+    x_coords = np.linspace(-0.5 * cell_xy[0], 0.5 * cell_xy[0], N_x) + (0.5 * cell_xy[0]/N_x)
+    y_coords = np.linspace(-0.5 * cell_xy[1], 0.5 * cell_xy[1], N_y) + (0.5 * cell_xy[1]/N_y)
     return np.stack(np.meshgrid(x_coords, y_coords, indexing='ij'), axis=-1)
