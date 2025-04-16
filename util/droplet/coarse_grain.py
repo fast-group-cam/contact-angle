@@ -22,24 +22,35 @@ the water molecules, at either one test point or a list of test points. The inpu
 
     - `pos`: Either the test point to calculate the density function at, with shape (3,); or the
     sequence of test points to calculate the density function at, with shape (N_pos, 3).
-    - `waters`: The Cartesian coordinates of the water molecules, with shape (N_water, 3).
+    - `waters`: The Cartesian coordinates of the water molecules, either with shape (N_water, 3)
+    for a single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
+    in which case the density distribution is averaged over the frames.
     - `coarse_grain_length`: The coarse-graining lengthscale in angstroms.
 
 If pos has shape (3,), then the output is a float representing the density at pos; and if it has
 shape (N_pos, 3), then the output is a np.NDArray of shape (N_pos,) representing the densities at
 each position."""
 
-    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3)
+    if len(waters.shape) == 2 and waters.shape[-1] == 3:
+        N_frames = 1
+        waters_unrolled = waters
+    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
+        N_frames = waters.shape[0]
+        waters_unrolled = waters.reshape(-1, 3)
+    else:
+        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
+
+    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3) / N_frames
     scaling = -0.5 / (coarse_grain_length**2)
 
     if pos.shape == (3,):
-        dist = waters - pos
+        dist = waters_unrolled - pos
         return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
     elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-        dist = waters[np.newaxis,:,:] - pos[:,np.newaxis,:]
+        dist = waters_unrolled[None,:,:] - pos[:,None,:]
         return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
     else:
-        raise RuntimeError(f'Unrecognized input shape: {pos.shape}')
+        raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
     
 #==================================================================================================
 
@@ -56,19 +67,28 @@ If pos has shape (3,), then the output is a np.NDArray of shape (3,) representin
 gradient at pos; and if it has shape (N_pos, 3), then the output is a np.NDArray of shape
 (N_pos, 3) representing the density gradients at each position."""
 
-    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5)
+    if len(waters.shape) == 2 and waters.shape[-1] == 3:
+        N_frames = 1
+        waters_unrolled = waters
+    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
+        N_frames = waters.shape[0]
+        waters_unrolled = waters.reshape(-1, 3)
+    else:
+        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
+    
+    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5) / N_frames
     scaling = -0.5 / (coarse_grain_length**2)
 
     if pos.shape == (3,):
-        dist = waters - pos
+        dist = waters_unrolled - pos
         return np.sum(prefactor * dist[:,:] *
-                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,np.newaxis], axis=0)
+                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
     elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-        dist = waters[np.newaxis,:,:] - pos[:,np.newaxis,:]
+        dist = waters_unrolled[None,:,:] - pos[:,None,:]
         return np.sum(prefactor * dist[:,:,:] *
-                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,np.newaxis], axis=1)
+                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
     else:
-        raise RuntimeError(f'Unrecognized input shape: {pos.shape}')
+        raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
 
 #==================================================================================================
 
@@ -89,7 +109,9 @@ instantaneous interface along a given search axis. The search axis should be a r
 within the bulk liquid region, pointing 'outwards' towards the exterior region in some direction.
 The inputs are:
 
-    - `waters`: The Cartesian coordinates of the water molecules, with shape (N_water, 3).
+    - `waters`: The Cartesian coordinates of the water molecules, either with shape (N_water, 3)
+    for a single instantaneous frame; or shape (N_frames, N_water, 3) for multiple frames, which
+    will be collated together.
     - `search_start`: The coordinates to begin searching from, with shape (3,); the search axis is
     a ray extending from this point. Ideally this point should be within the bulk liquid region,
     unless reverse_search is turned on.
@@ -120,6 +142,16 @@ represent the position and normal vector of the interface respectively. As befor
 will be issued if the intersection cannot be found, in which case the output will default to
 (search_start, axis)."""
 
+    # Process water shape and unroll (collate) into a single array
+    if len(waters.shape) == 2 and waters.shape[-1] == 3:
+        N_frames = 1
+        waters_unrolled = waters
+    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
+        N_frames = waters.shape[0]
+        waters_unrolled = waters.reshape(-1, 3)
+    else:
+        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
+    
     # Establish default parameters
     slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
     search_start = np.array(((0, 0, 0) if search_start is None else search_start), dtype=float)
@@ -127,11 +159,11 @@ will be issued if the intersection cannot be found, in which case the output wil
     axis /= np.linalg.norm(axis)
 
     # Shift positions ("sliced") to set search_start as the origin
-    sliced = waters - search_start
+    sliced = waters_unrolled - search_start
 
     # Perform slicing to reduce number of molecules to compute
     parallel_components = np.dot(sliced, axis)
-    perpendiculars = sliced - (parallel_components[:, np.newaxis] * axis[np.newaxis, :])
+    perpendiculars = sliced - (parallel_components[:, None] * axis[None, :])
     perpendiculars = np.sum(np.square(perpendiculars), axis=-1)
     sliced = sliced[perpendiculars < slice_width**2]
 
@@ -142,7 +174,7 @@ will be issued if the intersection cannot be found, in which case the output wil
     # Initial coarse search to determine maximum and minimum densities
     testpoints = np.linspace(0, z_ceil, 30)
     testpoints = testpoints[:, np.newaxis] * axis[np.newaxis, :]
-    densities = coarse_grained_density(testpoints, sliced, coarse_grain_length=coarse_grain_length)
+    densities = coarse_grained_density(testpoints, sliced, coarse_grain_length=coarse_grain_length) / N_frames
 
     if np.max(densities) < cutoff_density:
         warnings.warn('System density lower than cutoff density everywhere, could not identify ' +
@@ -160,7 +192,7 @@ will be issued if the intersection cannot be found, in which case the output wil
         result = (lower + upper) / 2.0
         while (upper - lower) > tol:
             density = coarse_grained_density(result * axis, sliced,
-                                             coarse_grain_length=coarse_grain_length)
+                                             coarse_grain_length=coarse_grain_length) / N_frames
             if density > cutoff_density:
                 upper = result
             else:
@@ -172,7 +204,7 @@ will be issued if the intersection cannot be found, in which case the output wil
         result = (lower + upper) / 2.0
         while (upper - lower) > tol:
             density = coarse_grained_density(result * axis, sliced,
-                                             coarse_grain_length=coarse_grain_length)
+                                             coarse_grain_length=coarse_grain_length) / N_frames
             if density > cutoff_density:
                 lower = result
             else:
