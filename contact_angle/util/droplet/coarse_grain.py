@@ -168,8 +168,10 @@ will be issued if the intersection cannot be found, in which case the output wil
     sliced = sliced[perpendiculars < slice_width**2]
 
     # Maximum z-coordinate to search
-    parallel_components = np.dot(sliced, axis)
-    z_ceil = (np.max(parallel_components) + slice_width if max_dist is None else max_dist)
+    if max_dist is None:
+        z_ceil = np.max(parallel_components) + (-slice_width if reverse_search else slice_width)
+    else:
+        z_ceil = max_dist
 
     # Initial coarse search to determine maximum and minimum densities
     testpoints = np.linspace(0, z_ceil, 30)
