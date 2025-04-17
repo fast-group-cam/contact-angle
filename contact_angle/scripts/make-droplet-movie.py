@@ -13,15 +13,15 @@ prog_desc_header = '''
 '''
 
 import os
-import argparse
 import time
+import argparse
 import numpy as np
 import ase.io
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
-from util.droplet.center_coordinates import center_coordinates
-from util.droplet.plot import plot_density_xz_slice, update_density_xz_slice
+from contact_angle.util.droplet.center_coordinates import center_coordinates
+from contact_angle.util.droplet.plot import plot_density_xz_slice, update_density_xz_slice
 
 if __name__ == "__main__":
 

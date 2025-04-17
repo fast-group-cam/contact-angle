@@ -3,9 +3,26 @@
 ##############################
 
 **/__pycache__/
+*.py[cod]
+*$py.class
 
 ############################
-# Local testing files etc. #
+# Distribution & packaging #
 ############################
 
-test/*
+build/
+*.egg-info/
+
+##########
+# PyTest #
+##########
+
+.pytest_cache/
+
+########
+# IDEs #
+########
+
+.idea/
+.vscode/
+.venv/

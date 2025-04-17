@@ -50,11 +50,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import ase
 import ase.io
-import util.droplet
-import util.droplet.plot
 
-from util import *
-from util.droplet.coarse_grain import COARSE_GRAIN_LENGTH, SLICING_CUTOFF, BULK_DENSITY
+from contact_angle.util import center_coordinates
+from contact_angle.util.droplet import find_interface
+from contact_angle.util.droplet.coarse_grain import COARSE_GRAIN_LENGTH, SLICING_CUTOFF, BULK_DENSITY
+from contact_angle.util.droplet.plot import plot_density_xz_slice
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable
@@ -84,7 +84,7 @@ encountered in this frame.
     """
 
     # Calculate droplet height
-    droplet_h = util.droplet.find_interface(waters, (0, 0, 0), (0, 0, 1))[2]
+    droplet_h = find_interface(waters, (0, 0, 0), (0, 0, 1))[2]
 
     # Pre-calculate rotation matrix for iterating through azimuthal slices
     rot_matrix = np.array(((np.cos(rot_angle * np.pi/180), -np.sin(rot_angle * np.pi/180), 0.0),
@@ -113,8 +113,8 @@ encountered in this frame.
         carbon_slice = carbon_slice[carbon_slice[:,1] > -SLICING_WIDTH]
         
         # Find left interface
-        l_inter, l_inter_norm = util.droplet.find_interface(l_waters, (0, 0, highest_scan_z),
-                                                            (-1, 0, 0), calc_normal=True)
+        l_inter, l_inter_norm = find_interface(l_waters, (0, 0, highest_scan_z), (-1, 0, 0),
+                                               calc_normal=True)
 
         # Find closest carbon atoms to the left interface, and calculate their normal vector
         l_inter_foot = np.zeros((3,), dtype=float)
@@ -135,8 +135,8 @@ encountered in this frame.
         angles[azi] = np.arccos(cosine) * 180.0 / np.pi
         
         # Find right interface
-        r_inter, r_inter_norm = util.droplet.find_interface(r_waters, (0, 0, highest_scan_z),
-                                                            (1, 0, 0), calc_normal=True)
+        r_inter, r_inter_norm = find_interface(r_waters, (0, 0, highest_scan_z), (1, 0, 0),
+                                               calc_normal=True)
 
         # Find closest carbon atoms to the right interface, and calculate their normal vector
         r_inter_foot = np.zeros((3,), dtype=float)
@@ -160,8 +160,8 @@ encountered in this frame.
         if (fig is not None) and (azi < len(axes)):
 
             # Plot density function, carbons, and full instantaneous interface
-            util.droplet.plot.plot_density_xz_slice(waters, carbon_slice, axes[azi],
-                                                    show_interface=True, color_inter=(1, 0, 1, 0.5))
+            plot_density_xz_slice(waters, carbon_slice, axes[azi], show_interface=True,
+                                  color_inter=(1, 0, 1, 0.5))
 
             # Plot carbon planes
             point_a_x = l_carbon_c[0] - l_carbon_l

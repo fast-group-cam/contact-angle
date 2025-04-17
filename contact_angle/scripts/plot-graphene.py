@@ -13,12 +13,12 @@ prog_desc_header = '''
 '''
 
 import os
+import time
 import argparse
 import numpy as np
 import ase.io
 import matplotlib.pyplot as plt
-import util.graphene
-import time
+from contact_angle.util.graphene import inclination_norm_inf_autocor
 
 if __name__ == "__main__":
 
@@ -85,8 +85,8 @@ if __name__ == "__main__":
     print(f'Using {threads} workers')
 
     carbons = np.array(carbons)
-    data = util.graphene.inclination_norm_inf_autocor(carbons, cell_xy, args.max_tau,
-                                                      (args.N_x, args.N_y), max_threads=threads)
+    data = inclination_norm_inf_autocor(carbons, cell_xy, args.max_tau, (args.N_x, args.N_y),
+                                        max_threads=threads)
     
     time_taken = time.time() - time_start
     hours = int(time_taken / 3600)
