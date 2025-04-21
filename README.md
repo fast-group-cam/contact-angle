@@ -1,5 +1,15 @@
 # contact-angle
 
+A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python, and only requires `numpy`, `matplotlib`, and `ase` (which are automatically included as package dependencies). To use this package:
+
+1. Create a Python virtual environment and activate it;
+2. Install this package by running `pip install .` in the repository directory.
+
+Afterwards, any of the analysis scripts can be run from the command line as `python /path/to/repo/contact_angle/scripts/<script-name.py> [inputs]`. The module `contact_angle.util` can also be imported directly into Python scripts, for a direct low-level interface to the methods.
+
+
+## scripts/contact-angle.py
+
 A python script, which measures the contact angle of a water droplet on a graphene sheet from a trajectory. This is done by finding the Willard-Chandler interface<sup>[1]</sup> for a small number of testpoints at the droplet's foot, and then calculating the direction of the best-fit plane of the interface. The script can be run by calling the following syntax (with optional arguments):
 
 ```
@@ -42,9 +52,36 @@ The reported value is printed directly to console, and the final graphical outpu
 
 - `--no-display` Disables the display of graphical output to the screen. Note that this is independent from `no-save`, e.g. it is possible to save the graphical output to file without displaying it.
 
-### Dependencies
 
-Requires `numpy`, `matplotlib`, and `ase`.
+## scripts/make-droplet-movie.py
+
+TODO: write this README!
+
+
+## scripts/plot-graphene.py
+
+TODO: write this README!
+
+
+## util/droplet
+
+The module `contact_angle.util.droplet` provides a direct low-level interface to four methods regarding the water droplet and its Willard-Chandler interface<sup>[1]</sup>:
+
+- `center_coordinates`: reads an ASE Atoms object, and recenters the coordinates across periodic boundary conditions so that the graphene sheet is at the z = 0 plane, the droplet's CoM is on the x = y = 0 axis, and all atomic coordinates are within the first periodic image.
+
+- `coarse_grained_density`: calculates the coarse-grained density function defined by Willard and Chandler.
+
+- `coarse_grained_density_grad`: calculates the gradient of the coarse-grained density function.
+
+- `find_interface`: given a "search origin" and "search direction", finds the intersection of the Willard-Chandler interface with a ray extending from the origin in the supplied direction.
+
+Additionally, the `contact_angle.util.droplet.plot` submodule provides functions which plot a coarse-grained density distribution directly to a MatPlotLib axis.
+
+
+## util/graphene
+
+The module `contact_angle.util.graphene` provides several methods regarding the analysis of a graphene sheet.
+
 
 ## References
 
@@ -52,6 +89,7 @@ Requires `numpy`, `matplotlib`, and `ase`.
 
 <sup>[2]</sup> W. Yang, R. Bitetti-Putzer, M. Karplus (2004). Free energy simulations: Use of reverse cumulative averaging to determine the equilibrated region and the time required for convergence. *J. Chem. Phys.*, 120(6): 2618–2628. [DOI:10.1063/1.1638996](https://doi.org/10.1063/1.1638996)
 
+
 ## Author
 
-Darren Wayne Lim (dwl38)
+Darren Wayne Lim (dwl38@cam.ac.uk)
