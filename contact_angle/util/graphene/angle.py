@@ -63,6 +63,37 @@ representing the local inclination angles over the trajectory."""
 
 #==================================================================================================
 
+def mean_inclination_angles(
+        carbons_traj: np.ndarray,
+        cell_xy: np.ndarray | tuple[float, float],
+        calc_points: tuple[int, int] | int = 80, *,
+        nn_count: int = NN_COUNT
+        ) -> np.ndarray:
+    """This function calculates the mean (time-averaged) local inclination angle of the graphene
+sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs are:
+
+    - `carbons_traj`: The Cartesian coordinates of the carbon atoms over a trajectory, with shape
+    (N_frames, N_carbon, 3).
+
+    - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
+
+    - `calc_points`: The number of grid points to calculate the inclination angles at, either
+    specified as a tuple of integers (N_x, N_y), or given as a single integer N_x = N_y.
+
+The output is a np.NDArray of shape (N_x, N_y) representing the autocorrelation function, evaluated
+at the grid points and tau."""
+
+    N_frames = carbons_traj.shape[0]
+    N_x, N_y = cast_to_gridsize(calc_points)
+    
+    angles = np.zeros((N_frames, N_x, N_y), dtype=float)
+    for f, carbons in enumerate(carbons_traj):
+        angles[f] = calc_inclination_angles(carbons, cell_xy, calc_points, nn_count=nn_count)
+
+    return np.mean(angles, axis=0)
+
+#==================================================================================================
+
 def inclination_autocorrelations(
         carbons_traj: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
