@@ -229,8 +229,15 @@ def plot_density_xz_slice_multi(
     plot_z_space = np.linspace(plot_z_min, plot_z_max, n_plot_bins)
     plot_z_pad = (plot_z_space[1] - plot_z_space[0]) / 2.0
     xx, zz = np.meshgrid(plot_x_space, plot_z_space)
-    testpoints = np.column_stack((xx.ravel(), np.zeros(n_plot_bins*n_plot_bins), zz.ravel()))
-    densities = coarse_grained_density(testpoints, waters, coarse_grain_length=coarse_grain_length)
+    testpoints = np.column_stack((xx.ravel(), np.zeros(n_plot_bins**2), zz.ravel()))
+    if waters.size * testpoints.shape[0] < 1000000000:
+        densities = coarse_grained_density(testpoints, waters,
+                                           coarse_grain_length=coarse_grain_length)
+    else:
+        densities = np.zeros((n_plot_bins**2,), dtype=float)
+        for water in waters:
+            densities += coarse_grained_density(testpoints, water,
+                                                coarse_grain_length=coarse_grain_length)
     densities = np.reshape(densities, (n_plot_bins, n_plot_bins))
     colors = np.zeros((n_plot_bins, n_plot_bins, 4), dtype=float)
     colors[:,:,0] = np.clip((densities / bulk_density) - 1.0, a_min=0.0, a_max=1.0)
