@@ -1,6 +1,10 @@
 import warnings
 import numpy as np
 import ase
+from pathlib import PurePath
+from typing import IO
+
+#==================================================================================================
 
 def center_coordinates(
         atoms: ase.Atoms,
@@ -74,3 +78,60 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
     hydrogens[:,2] -= cell_z * np.round((hydrogens[:,2] - CoM_z) / cell_z)
 
     return (oxygens, carbons, hydrogens)
+
+#==================================================================================================
+
+def read_droplet_trajectory(
+        filename: str | PurePath | IO,
+        **kwargs
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """This function reads a file containing a trajectory of a water droplet on graphene, and
+parses it automatically (including centering the coordinates via `center_coordinates`). The input
+arguments are passed directly to `ase.io.iread`.
+
+Importantly, the file must either have parseable atomic species, or have atomic species specified
+by an internal index (e.g. in the style of LAMMPS) which maps according to {1: carbon, 2: hydrogen,
+3: oxygen}; and the file must contain at least one atom of each type.
+
+The output is a tuple of four np.NDArrays: the first array has shape (3,) and gives the system cell
+parameters; the second array has shape (N_frames, N_water, 3) for the time-evolution of the
+Cartesian coordinates of the water molecules (taken as just oxygen atoms); the third array has
+shape (N_frames, N_carbon, 3) for the carbon atoms; and the fourth array has shape (N_frames,
+2 * N_water, 3) for the hydrogen atoms."""
+
+    traj = ase.io.iread(filename, **kwargs)
+    cell_params = None
+    need_to_reassign = None
+
+    list_oxygens = list()
+    list_carbons = list()
+    list_hydrogens = list()
+
+    for atoms in traj:
+
+        # Read cell parameters in
+        if cell_params is None:
+            cell_params = np.array(atoms.cell.cellpar()[0:3])
+        
+        # Check which ordering of elements is present...
+        if need_to_reassign is None:
+            elems = np.unique(atoms.numbers)
+            if np.array_equal(elems, (1, 2, 3)):
+                need_to_reassign = True
+            elif np.array_equal(elems, (1, 6, 8)):
+                need_to_reassign = False
+            else:
+                raise RuntimeError('Elements not recognized!')
+            
+        # ...and reassign if necessary
+        if need_to_reassign:
+            atoms.numbers[atoms.numbers == 1] = 6
+            atoms.numbers[atoms.numbers == 2] = 1
+            atoms.numbers[atoms.numbers == 3] = 8
+
+        oxygens, carbons, hydrogens = center_coordinates(atoms, cell_params)
+        list_oxygens.append(oxygens)
+        list_carbons.append(carbons)
+        list_hydrogens.append(hydrogens)
+
+    return (cell_params, np.array(list_oxygens), np.array(list_carbons), np.array(list_hydrogens))
