@@ -1,6 +1,7 @@
 import warnings
 import numpy as np
 import ase
+import ase.io
 from pathlib import PurePath
 from typing import IO
 
