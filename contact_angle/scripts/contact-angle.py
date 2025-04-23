@@ -415,6 +415,13 @@ if __name__ == "__main__":
             fig.savefig(prog_args.output_filename, dpi=fig.dpi)
         if prog_args.opt_display:
             plt.show()
+
+        # TEMPORARY
+        fig, ax = plt.subplots()
+        ax.plot(np.linspace(0, 360, angles.shape[0]), angles)
+        fig.savefig('tmp.png', dpi=(3 * fig.dpi))
+        plt.show()
+
         sys.exit()
 
     #--------------------------------------------------------------------------------------------------
@@ -549,4 +556,10 @@ if __name__ == "__main__":
                 fig.savefig(prog_args.output_filename, dpi=fig.dpi)
             if prog_args.opt_display:
                 plt.show()
+
+        # TEMPORARY
+        fig, ax = plt.subplots()
+        ax.errorbar(list(range(frame_counter)), np.mean(angles, axis=1), yerr=np.std(angles, axis=1))
+        plt.show()
+
         sys.exit()
