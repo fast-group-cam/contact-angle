@@ -19,14 +19,10 @@ def generate_sheet(
     """This function generates a graphene sheet. The inputs are:
 
     - `max_cell_x`: The maximum dimension of cell_x in angstroms.
-
     - `max_cell_y`: The maximum dimension of cell_y in angstroms, if specified; otherwise taken to
     be equal to max_cell_x.
-
     - `interatomic_dist`: The interatomic distance to generate the sheet with.
-
     - `atomic_symbol`: The symbol of the atom used to generate the sheet.
-
     - `origin`: If set to 'corner', the sheet will be generated within the x-coordinate range of 0
     to cell_x, and y-coordinate range of 0 to cell_y; if set to 'center', the sheet will be
     generated within the x-coordinate range of -0.5 * cell_x to 0.5 * cell_x, and y-coordinate

@@ -1,6 +1,5 @@
 import warnings
 import numpy as np
-import concurrent.futures
 from scipy.spatial import cKDTree
 from scipy.linalg import lstsq
 from scipy.optimize import curve_fit
@@ -25,9 +24,7 @@ test points along the xy plane. The inputs are:
 
     - `carbons`: The Cartesian coordinates of the carbon atoms, either with shape (N_carbon, 3)
     for a single instantaneous frame, or shape (N_frames, N_carbon, 3) for a trajectory.
-
     - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-
     - `calc_points`: The number of grid points to calculate the inclination angles at, either
     specified as a tuple of integers (N_x, N_y), or given as a single integer N_x = N_y.
 
@@ -88,9 +85,7 @@ sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs
 
     - `carbons_traj`: The Cartesian coordinates of the carbon atoms over a trajectory, with shape
     (N_frames, N_carbon, 3).
-
     - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-
     - `calc_points`: The number of grid points to calculate the inclination angles at, either
     specified as a tuple of integers (N_x, N_y), or given as a single integer N_x = N_y.
 
@@ -114,11 +109,8 @@ graphene sheet (wrt the z-axis) at a series of test points along the xy plane. T
 
     - `carbons_traj`: The Cartesian coordinates of the carbon atoms over a trajectory, with shape
     (N_frames, N_carbon, 3).
-
     - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-
     - `tau`: The time interval to evaluate the autocorrelation function at, in number of frames.
-
     - `calc_points`: The number of grid points to calculate the inclination angles at, either
     specified as a tuple of integers (N_x, N_y), or given as a single integer N_x = N_y.
 
@@ -151,12 +143,9 @@ infinity, at a series of test points along the xy plane. The inputs are:
 
     - `carbons_traj`: The Cartesian coordinates of the carbon atoms over a trajectory, with shape
     (N_frames, N_carbon, 3).
-
     - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-
     - `max_tau`: The maximum time interval to evaluate the autocorrelation function at, in number
     of frames; this should be no more than 5ps worth of frames.
-
     - `calc_points`: The number of grid points to calculate the inclination angles at, either
     specified as a tuple of integers (N_x, N_y), or given as a single integer N_x = N_y.
 
