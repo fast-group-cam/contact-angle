@@ -16,11 +16,10 @@ import os
 import time
 import argparse
 import numpy as np
-import ase.io
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
-from contact_angle.util.droplet.center_coordinates import center_coordinates
+from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet.plot import plot_density_xz_slice, update_density_xz_slice
 
 if __name__ == "__main__":
@@ -51,109 +50,44 @@ if __name__ == "__main__":
         os.remove(args.output)
 
     #----------------------------------------------------------------------------------------------
-    # Function to convert timings into a nicely formatted string
-
-    def time_diff(time_start):
-        time_taken = time.time() - time_start
-        if time_taken > 3600:
-            hours = int(time_taken / 3600)
-            time_taken -= hours * 3600
-            mins = int(time_taken / 60)
-            time_taken -= mins * 60
-            return f'(hh:mm:ss) {hours:02}:{mins:02}:{round(time_taken):02}'
-        if time_taken > 60:
-            mins = int(time_taken / 60)
-            time_taken -= mins * 60
-            return f'{mins}mins{round(time_taken):02}s'
-        return f'{time_taken:.3f}s'
-
-    time_start_0 = time.time()
-
-    #----------------------------------------------------------------------------------------------
     # Read input file and iterate through frames
 
-    carbons = list()
-    hydrogens = list()
-    oxygens = list()
-    frame_counter = 0
-    cell_params = None
-    lammps_elem_order = None
-
-    print(f'Reading "{args.input_file}"...')
+    print(f'Reading "{args.input_file}"...', end='')
+    time_start_0 = time.time()
     time_start_1 = time.time()
-
-    traj = ase.io.iread(args.input_file, index=args.index)
-    for atoms in traj:
-
-        # Timing purposes
-        time_start_2 = time.time()
-
-        # Get cell parameters
-        if cell_params is None:
-            cell_params = np.array(atoms.cell.cellpar()[0:3])
-            cell_xy = cell_params[0:2]
-            cell_z = cell_params[2]
-
-        # Check if atomic numbers are assigned according to LAMMPS ordering or true atomic numbers
-        if lammps_elem_order is None:
-            element_numbers = np.unique(atoms.numbers)
-            if np.array_equal(element_numbers, [1, 2, 3]):
-                lammps_elem_order = True
-            elif np.array_equal(element_numbers, [1, 6, 8]):
-                lammps_elem_order = False
-            else:
-                raise RuntimeError(f'Unidentified atomic numbers in file "{args.input_file}"!')
-
-        # Reassign if necessary
-        if lammps_elem_order:
-            atoms.numbers[atoms.numbers == 1] = 6
-            atoms.numbers[atoms.numbers == 2] = 1
-            atoms.numbers[atoms.numbers == 3] = 8
-
-        # Save positions of atoms to memory
-        coords = center_coordinates(atoms, cell_params)
-        oxygens.append(coords[0])
-        carbons.append(coords[1])
-        hydrogens.append(coords[2])
-
-        # Next iteration
-        print(f'   - processed frame {frame_counter} in {time_diff(time_start_2)}.')
-        frame_counter += 1
-
-    carbons = np.array(carbons)
-    hydrogens = np.array(hydrogens)
-    oxygens = np.array(oxygens)
-    print(f'read {frame_counter} frames from "{args.input_file}" in {time_diff(time_start_1)}.\n')
+    cell_params, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file,
+                                                                       index=args.index)
+    N_frames = carbons.shape[0]
+    print(f'read {N_frames} frames from "{args.input_file}" in {elapsed_time(time_start_1)}.')
 
     #----------------------------------------------------------------------------------------------
     # Generate movie
 
-    print('\nPrerender processing...', end='')
+    print('Prerender processing...', end='')
 
-    N_frames = carbons.shape[0]
-    N_carbons = carbons.shape[1]
-    N_hydrogens = hydrogens.shape[1]
-    N_oxygens = oxygens.shape[1]
+    NC = carbons.shape[1]
+    NH = hydrogens.shape[1]
+    NO = oxygens.shape[1]
 
-    scatterpoints = np.zeros((N_frames, N_carbons + N_hydrogens + N_oxygens, 3), dtype=float)
-    scattersizes = np.zeros((N_carbons + N_hydrogens + N_oxygens,), dtype=float)
-    scattercolors = np.zeros((N_frames, N_carbons + N_hydrogens + N_oxygens, 3), dtype=float)
+    scatterpoints = np.zeros((N_frames, NC + NH + NO, 3), dtype=float)
+    scattersizes = np.zeros((NC + NH + NO,), dtype=float)
+    scattercolors = np.zeros((N_frames, NC + NH + NO, 3), dtype=float)
 
-    scatterpoints[:, 0:N_carbons] = carbons
-    scattersizes[0:N_carbons] = (2 * RADIUS_CARBON)**2
+    scatterpoints[:, 0:NC] = carbons
+    scattersizes[0:NC] = (2 * RADIUS_CARBON)**2
     carbon_width = np.max(carbons[:,:,2]) - np.min(carbons[:,:,2])
     z_devs = 0.6 * carbons[:,:,2] / carbon_width
-    scattercolors[:, 0:N_carbons, 0] = 0.5 + z_devs
-    scattercolors[:, 0:N_carbons, 1] = 0.5 - (np.square(z_devs) / 0.3)
-    scattercolors[:, 0:N_carbons, 2] = 0.5 - z_devs
+    scattercolors[:, 0:NC, 0] = 0.5 + z_devs
+    scattercolors[:, 0:NC, 1] = 0.5 - (np.square(z_devs) / 0.3)
+    scattercolors[:, 0:NC, 2] = 0.5 - z_devs
 
-    scatterpoints[:, N_carbons:(N_carbons + N_hydrogens)] = hydrogens
-    scattersizes[N_carbons:(N_carbons + N_hydrogens)] = (2 * RADIUS_HYDROGEN)**2
-    scattercolors[:, N_carbons:(N_carbons + N_hydrogens)] = np.array((0.9, 0.9, 0.9))
+    scatterpoints[:, NC:(NC + NH)] = hydrogens
+    scattersizes[NC:(NC + NH)] = (2 * RADIUS_HYDROGEN)**2
+    scattercolors[:, NC:(NC + NH)] = np.array((0.9, 0.9, 0.9))
 
-    scatterpoints[:, (N_carbons + N_hydrogens):(N_carbons + N_hydrogens + N_oxygens)] = oxygens
-    scattersizes[(N_carbons + N_hydrogens):(N_carbons + N_hydrogens + N_oxygens)] = (2 * RADIUS_OXYGEN)**2
-    scattercolors[:, (N_carbons + N_hydrogens):(N_carbons + N_hydrogens + N_oxygens)] = np.array((1, 0, 0))
+    scatterpoints[:, (NC + NH):(NC + NH + NO)] = oxygens
+    scattersizes[(NC + NH):(NC + NH + NO)] = (2 * RADIUS_OXYGEN)**2
+    scattercolors[:, (NC + NH):(NC + NH + NO)] = np.array((1, 0, 0))
 
     fig = plt.figure(figsize=(14, 7), dpi=300)
     ax3d = fig.add_subplot(1, 2, 1, projection='3d')
@@ -184,6 +118,8 @@ if __name__ == "__main__":
                             s=scattersizes, c=scattercolors[0], depthshade=False, linewidth=0.1)
     render3d.set_edgecolor('black')
 
+    frame_label = ax3d.annotate('Frame #0', (0, 1), xycoords='axes fraction', ha='left', va='top')
+
     render2d = plot_density_xz_slice(oxygens[0], carbons[0], ax2d, show_interface=True)
     ax2d.set_xlim([np.min(scatterpoints[:,:,0]), np.max(scatterpoints[:,:,0])])
     ax2d.set_ylim([np.min(scatterpoints[:,:,2]), np.max(scatterpoints[:,:,2])])
@@ -194,14 +130,15 @@ if __name__ == "__main__":
     def update(frame):
         render3d._offsets3d = scatterpoints[frame].T
         render3d.set_facecolor(scattercolors[frame])
+        frame_label.set(text=f'Frame #{frame}')
         update_density_xz_slice(oxygens[frame], carbons[frame], render2d)
         print(f'    - rendered frame {frame} / {N_frames}...')
-        return (render3d, *render2d)
+        return (render3d, frame_label, *render2d)
 
     print('complete, now rendering...')
-    render_time_start = time.time()
+    time_start_1 = time.time()
     animation = anim.FuncAnimation(fig=fig, func=update, frames=N_frames, interval=30, blit=False)
     animation.save(filename=args.output, writer='ffmpeg')
-    print(f'...done in {time_diff(render_time_start)}.')
-    print(f'\nProgram completed in {time_diff(time_start_0)}.')
+    print(f'...done in {elapsed_time(time_start_1)}.')
+    print(f'Program completed in {elapsed_time(time_start_0)}.')
 
