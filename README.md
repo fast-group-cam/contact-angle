@@ -1,6 +1,6 @@
 # contact-angle
 
-A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python, and only requires `numpy`, `matplotlib`, and `ase` (which are automatically included as package dependencies). To use this package:
+A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python, and only requires `numpy`, `scipy`, `matplotlib`, and `ase` (which are automatically included as package dependencies). To use this package:
 
 1. Create a Python virtual environment and activate it;
 2. Install this package by running `pip install .` in the repository directory.
