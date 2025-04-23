@@ -43,6 +43,12 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
     oxygens[:,2] -= mean_carbon_z_coord
     hydrogens[:,2] -= mean_carbon_z_coord
 
+    # If there are no water molecules, return just the carbons (centred on unit cell)
+    if N_water == 0:
+        cell_xy = np.array(cell_params[0:2])
+        carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
+        return (oxygens, carbons, hydrogens)
+
     # Send all water molecules to the +z side of the graphene
     oxygens[oxygens[:,2] < 0.0] += np.array((0, 0, cell_z))
     hydrogens[hydrogens[:,2] < 0.0] += np.array((0, 0, cell_z))
@@ -60,7 +66,7 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
     #   - Repeat 3 times, to undo all possible boundary crossings
     cell_xy = np.array(cell_params[0:2])
     for i in range(3):
-        oxygens[:,(0,1)] -= cell_xy * np.round(oxygens[:,(0,1)] / cell_xy)
+        oxygens[:,0:2] -= cell_xy * np.round(oxygens[:,0:2] / cell_xy)
         CoM = np.mean(oxygens, axis=0)
         CoM[2] = 0
         oxygens -= CoM
@@ -68,8 +74,8 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
         hydrogens -= CoM
 
     # Centralize unit cell
-    carbons[:,(0,1)] -= cell_xy * np.round(carbons[:,(0,1)] / cell_xy)
-    hydrogens[:,(0,1)] -= cell_xy * np.round(hydrogens[:,(0,1)] / cell_xy)
+    carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
+    hydrogens[:,0:2] -= cell_xy * np.round(hydrogens[:,0:2] / cell_xy)
 
     # Fixing a weird bug where the droplet is sometimes set to the wrong side of the unit cell
     oxygens[:,2] = np.remainder(oxygens[:,2], cell_z)
@@ -117,9 +123,9 @@ shape (N_frames, N_carbon, 3) for the carbon atoms; and the fourth array has sha
         # Check which ordering of elements is present...
         if need_to_reassign is None:
             elems = np.unique(atoms.numbers)
-            if np.array_equal(elems, (1, 2, 3)):
+            if np.array_equal(elems, (1, 2, 3)) or np.array_equal(elems, (1,)):
                 need_to_reassign = True
-            elif np.array_equal(elems, (1, 6, 8)):
+            elif np.array_equal(elems, (1, 6, 8)) or np.array_equal(elems, (6,)):
                 need_to_reassign = False
             else:
                 raise RuntimeError('Elements not recognized!')
