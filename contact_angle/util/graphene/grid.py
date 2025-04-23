@@ -49,7 +49,7 @@ def smooth_sheet(
         carbons: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
         N: tuple[int, int] | int = 80
-        ) -> tuple[np.ndarray, np.ndarray]:
+        ) -> np.ndarray:
     """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
 calculates a 'smooth' sheet using the Clough-Tocher interpolator on the standard grid given by
 `generate_grid`. The inputs are:
