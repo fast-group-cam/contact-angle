@@ -19,7 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from contact_angle.util import elapsed_time, read_droplet_trajectory
-from contact_angle.util.graphene import calc_inclination_angles
+from contact_angle.util.graphene import smooth_sheet, calc_inclination_angles
 
 if __name__ == "__main__":
 
@@ -58,11 +58,23 @@ if __name__ == "__main__":
     print(f'Read "{args.input_file}" in {elapsed_time(time_start)}.')
     
     #----------------------------------------------------------------------------------------------
-    # Calculate local inclination angles and display
+    # Calculate interpolated z-heights
+
+    time_start = time.time()
+    sheet = np.zeros((carbons.shape[0], args.N_x, args.N_y), dtype=float)
+    for f, carbon_atoms in enumerate(carbons):
+        sheet[f] = smooth_sheet(carbon_atoms, cell_xy, (args.N_x, args.N_y))
+    print(f'Calculated interpolated z-heights in {elapsed_time(time_start)}.')
+
+    #----------------------------------------------------------------------------------------------
+    # Calculate local inclination angles
 
     time_start = time.time()
     angles = calc_inclination_angles(carbons, cell_xy, (args.N_x, args.N_y))
     print(f'Calculated local inclination angles in {elapsed_time(time_start)}.')
+
+    #----------------------------------------------------------------------------------------------
+    # Calculate normalized infinite-time autocorrelations of local inclination angles
 
     time_start = time.time()
     autocorr = np.zeros((args.max_tau, args.N_x, args.N_y), dtype=float)
@@ -80,30 +92,49 @@ if __name__ == "__main__":
         for j in range(args.N_y):
             try:
                 popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.2, 0.5, 0.8))
-                inf_autoc[i,j] = popt[-1]
+                inf_autoc[i,j] = max(popt[-1], 0.0)
             except RuntimeError:
-                inf_autoc[i,j] = 0.8
+                inf_autoc[i,j] = 0.0
     print(f'Calculated autocorrelations in {elapsed_time(time_start)}.')
 
-    fig, ax = plt.subplots(1, 2)
-    fig.set_size_inches(14, 8)
-    extent =  (-0.5 * cell_xy[0], 0.5 * cell_xy[0], -0.5 * cell_xy[1], 0.5 * cell_xy[1])
+    #----------------------------------------------------------------------------------------------
+    # Display plots
 
-    im = ax[0].imshow(np.swapaxes(np.mean(angles, axis=0), 0, 1), origin='lower', extent=extent)
-    cbar = fig.colorbar(im, ax=ax[0], fraction=0.046, pad=0.04)
+    fig, ax = plt.subplots(2, 2)
+    fig.set_size_inches(9, 9)
+    extent = (-0.5 * cell_xy[0], 0.5 * cell_xy[0], -0.5 * cell_xy[1], 0.5 * cell_xy[1])
+
+    im = ax[0][0].imshow(np.swapaxes(np.mean(sheet, axis=0), 0, 1), origin='lower', extent=extent)
+    cbar = fig.colorbar(im, ax=ax[0][0], fraction=0.046, pad=0.04)
+    cbar.set_label(r'$\langle z\rangle_t$')
+    ax[0][0].set_xlabel(r'x ($\AA$)')
+    ax[0][0].set_ylabel(r'y ($\AA$)')
+    ax[0][0].set_title('Time-averaged z-height')
+    ax[0][0].set_aspect('equal')
+    
+    im = ax[0][1].imshow(np.swapaxes(np.std(sheet, axis=0), 0, 1), origin='lower', extent=extent)
+    cbar = fig.colorbar(im, ax=ax[0][1], fraction=0.046, pad=0.04)
+    cbar.set_label(r'$\sigma_z$')
+    ax[0][1].set_xlabel(r'x ($\AA$)')
+    ax[0][1].set_ylabel(r'y ($\AA$)')
+    ax[0][1].set_title('Fluctuation width of z-height')
+    ax[0][1].set_aspect('equal')
+
+    im = ax[1][0].imshow(np.swapaxes(np.mean(angles, axis=0), 0, 1), origin='lower', extent=extent)
+    cbar = fig.colorbar(im, ax=ax[1][0], fraction=0.046, pad=0.04)
     cbar.set_label(r'$\langle\theta\rangle_t$')
-    ax[0].set_xlabel(r'x ($\AA$)')
-    ax[0].set_ylabel(r'y ($\AA$)')
-    ax[0].set_title('Time-averaged local inclination angle')
-    ax[0].set_aspect('equal')
+    ax[1][0].set_xlabel(r'x ($\AA$)')
+    ax[1][0].set_ylabel(r'y ($\AA$)')
+    ax[1][0].set_title('Time-averaged local inclination angle')
+    ax[1][0].set_aspect('equal')
 
-    im = ax[1].imshow(np.swapaxes(inf_autoc, 0, 1), origin='lower', extent=extent)
-    cbar = fig.colorbar(im, ax=ax[1], fraction=0.046, pad=0.04)
+    im = ax[1][1].imshow(np.swapaxes(inf_autoc, 0, 1), origin='lower', extent=extent)
+    cbar = fig.colorbar(im, ax=ax[1][1], fraction=0.046, pad=0.04)
     cbar.set_label(r'$C_{\theta}(\tau\to\infty)$')
-    ax[1].set_xlabel(r'x ($\AA$)')
-    ax[1].set_ylabel(r'y ($\AA$)')
-    ax[1].set_title('Normalized autocorrelation of local inclination angle')
-    ax[1].set_aspect('equal')
+    ax[1][1].set_xlabel(r'x ($\AA$)')
+    ax[1][1].set_ylabel(r'y ($\AA$)')
+    ax[1][1].set_title('Normalized autocorrelation of local inclination angle')
+    ax[1][1].set_aspect('equal')
 
     fig.tight_layout()
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)

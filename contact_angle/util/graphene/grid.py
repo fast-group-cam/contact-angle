@@ -64,10 +64,14 @@ The output is a np.NDArray of shape (N_x, N_y), representing the smooth surface 
 at the gridpoints given by `generate_grid`."""
     
     cell_xy = np.array(cell_xy[0:2], dtype=float)
+    cell_params = np.array((cell_xy[0], cell_xy[1], 0), dtype=float)
     carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
     carbons[:,2] -= np.mean(carbons[:,2])
 
+    shifts = np.array([[i, j, 0] for i in [-1, 0, 1] for j in [-1, 0, 1]]) * cell_params
+    tiled_carbons = (carbons[None, :, :] + shifts[:, None, :]).reshape(-1, 3)
+
     real_grid = generate_grid(N, cell_xy)
-    interp = CloughTocher2DInterpolator(carbons[:,0:2], carbons[:,2])
+    interp = CloughTocher2DInterpolator(tiled_carbons[:,0:2], tiled_carbons[:,2])
     interp_z = interp(real_grid[:,:,0], real_grid[:,:,1])
     return np.nan_to_num(interp_z)
