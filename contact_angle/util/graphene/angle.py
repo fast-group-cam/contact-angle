@@ -17,8 +17,7 @@ def calc_inclination_angles(
         carbons: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT,
-        max_threads: int = None
+        nn_count: int = NN_COUNT
         ) -> np.ndarray:
     """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
 calculates the local inclination angle of the graphene sheet (wrt the z-axis) at a series of
@@ -42,16 +41,8 @@ representing the local inclination angles over the trajectory."""
         N_frames = carbons.shape[0]
         N_x, N_y = cast_to_gridsize(calc_points)
         results = np.zeros((N_frames, N_x, N_y), dtype=float)
-        if max_threads is None or int(max_threads) == 1:
-            for f, c in enumerate(carbons):
-                results[f] = calc_inclination_angles(c, cell_xy, calc_points, nn_count=nn_count)
-        else:
-            def work(f, c):
-                results[f] = calc_inclination_angles(c, cell_xy, calc_points, nn_count=nn_count)
-            pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_threads)
-            for f, c in enumerate(carbons):
-                pool.submit(work, f, c)
-            pool.shutdown(wait=True)
+        for f, c in enumerate(carbons):
+            results[f] = calc_inclination_angles(c, cell_xy, calc_points, nn_count=nn_count)
         return results
 
     elif len(carbons.shape) == 2 and carbons.shape[-1] == 3:
@@ -66,7 +57,7 @@ representing the local inclination angles over the trajectory."""
         shifts = np.array([[i, j, 0] for i in [-1, 0, 1] for j in [-1, 0, 1]]) * cell_params
         tiled_carbons = (carbons[None, :, :] + shifts[:, None, :]).reshape(-1, 3)
         tree = cKDTree(tiled_carbons[:, :2])
-        dists, idxs = tree.query(pos, k=nn_count)
+        _, idxs = tree.query(pos, k=nn_count)
 
         nearest_neighbours = tiled_carbons[idxs]
         nearest_neighbours[:, :, :2] = nearest_neighbours[:, :, :2] - pos[:, None, :]
@@ -90,8 +81,7 @@ def mean_inclination_angles(
         carbons_traj: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT,
-        max_threads: int = None
+        nn_count: int = NN_COUNT
         ) -> np.ndarray:
     """This function calculates the mean (time-averaged) local inclination angle of the graphene
 sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs are:
@@ -107,8 +97,7 @@ sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs
 The output is a np.NDArray of shape (N_x, N_y) representing the autocorrelation function, evaluated
 at the grid points and tau."""
 
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count,
-                                     max_threads=max_threads)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
     return np.mean(angles, axis=0)
 
 #==================================================================================================
@@ -118,8 +107,7 @@ def inclination_autocorrelations(
         cell_xy: np.ndarray | tuple[float, float],
         tau: int = 0,
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT,
-        max_threads: int = None
+        nn_count: int = NN_COUNT
         ) -> np.ndarray:
     """This function calculates the autocorrelation function of the local inclination angle of the
 graphene sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs are:
@@ -143,8 +131,7 @@ at the grid points and tau."""
         N_x, N_y = cast_to_gridsize(calc_points)
         return np.zeros((N_x, N_y), dtype=float)
     
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count,
-                                     max_threads=max_threads)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
     if tau == 0:
         return np.mean(np.square(angles), axis=0)
     return np.mean(angles[:-tau] * angles[tau:], axis=0)
@@ -156,8 +143,7 @@ def inclination_norm_inf_autocor(
         cell_xy: np.ndarray | tuple[float, float],
         max_tau: int,
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT,
-        max_threads: int = None
+        nn_count: int = NN_COUNT
         ) -> np.ndarray:
     """This function calculates the limit of the normalized autocorrelation function of the local
 inclination angle of the graphene sheet (wrt the z-axis) as the autocorrelation time goes to
@@ -179,8 +165,7 @@ normalized autocorrelation function, evaluated at the grid points."""
 
     N_x, N_y = cast_to_gridsize(calc_points)
     autocorr = np.zeros((max_tau, N_x, N_y), dtype=float)
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count,
-                                     max_threads=max_threads)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
 
     autocorr[0] = np.mean(np.square(angles), axis=0)
     for tau in range(1, max_tau):
@@ -194,7 +179,9 @@ normalized autocorrelation function, evaluated at the grid points."""
     result = np.zeros((N_x, N_y), dtype=float)
     for i in range(N_x):
         for j in range(N_y):
-            popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.3, 1, 0.7))
-            result[i,j] = popt[-1]
-
+            try:
+                popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.2, 0.5, 0.8))
+                result[i,j] = max(popt[-1], 0.0)
+            except RuntimeError:
+                result[i,j] = 0.0
     return result
