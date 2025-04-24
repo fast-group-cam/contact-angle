@@ -3,7 +3,7 @@ import numpy as np
 import ase
 import ase.io
 from pathlib import PurePath
-from typing import IO
+from typing import IO, Iterable
 
 #==================================================================================================
 
@@ -89,11 +89,11 @@ shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
 #==================================================================================================
 
 def read_droplet_trajectory(
-        filename: str | PurePath | IO,
+        filename: str | PurePath | IO | Iterable,
         **kwargs
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """This function reads a file containing a trajectory of a water droplet on graphene, and
-parses it automatically (including centering the coordinates via `center_coordinates`). The input
+    """This function reads a file (or multiple files) containing a trajectory of a water droplet on
+graphene, and parses it (including centering the coordinates via `center_coordinates`). The input
 arguments are passed directly to `ase.io.iread`.
 
 Importantly, the file must either have parseable atomic species, or have atomic species specified
@@ -106,39 +106,48 @@ Cartesian coordinates of the water molecules (taken as just oxygen atoms); the t
 shape (N_frames, N_carbon, 3) for the carbon atoms; and the fourth array has shape (N_frames,
 2 * N_water, 3) for the hydrogen atoms."""
 
-    traj = ase.io.iread(filename, **kwargs)
-    cell_params = None
-    need_to_reassign = None
+    if type(filename) == str:
+        filenames = (filename,)
+    elif isinstance(filename, Iterable):
+        filenames = filename
+    else:
+        filenames = (filename,)
 
+    cell_params = None
     list_oxygens = list()
     list_carbons = list()
     list_hydrogens = list()
 
-    for atoms in traj:
+    for name in filenames:
 
-        # Read cell parameters in
-        if cell_params is None:
-            cell_params = np.array(atoms.cell.cellpar()[0:3])
-        
-        # Check which ordering of elements is present...
-        if need_to_reassign is None:
-            elems = np.unique(atoms.numbers)
-            if np.array_equal(elems, (1, 2, 3)) or np.array_equal(elems, (1,)):
-                need_to_reassign = True
-            elif np.array_equal(elems, (1, 6, 8)) or np.array_equal(elems, (6,)):
-                need_to_reassign = False
-            else:
-                raise RuntimeError('Elements not recognized!')
+        traj = ase.io.iread(name, **kwargs)
+        need_to_reassign = None
+
+        for atoms in traj:
+
+            # Read cell parameters in
+            if cell_params is None:
+                cell_params = np.array(atoms.cell.cellpar()[0:3])
             
-        # ...and reassign if necessary
-        if need_to_reassign:
-            atoms.numbers[atoms.numbers == 1] = 6
-            atoms.numbers[atoms.numbers == 2] = 1
-            atoms.numbers[atoms.numbers == 3] = 8
+            # Check which ordering of elements is present...
+            if need_to_reassign is None:
+                elems = np.unique(atoms.numbers)
+                if np.array_equal(elems, (1, 2, 3)) or np.array_equal(elems, (1,)):
+                    need_to_reassign = True
+                elif np.array_equal(elems, (1, 6, 8)) or np.array_equal(elems, (6,)):
+                    need_to_reassign = False
+                else:
+                    raise RuntimeError('Elements not recognized!')
+                
+            # ...and reassign if necessary
+            if need_to_reassign:
+                atoms.numbers[atoms.numbers == 1] = 6
+                atoms.numbers[atoms.numbers == 2] = 1
+                atoms.numbers[atoms.numbers == 3] = 8
 
-        oxygens, carbons, hydrogens = center_coordinates(atoms, cell_params)
-        list_oxygens.append(oxygens)
-        list_carbons.append(carbons)
-        list_hydrogens.append(hydrogens)
+            oxygens, carbons, hydrogens = center_coordinates(atoms, cell_params)
+            list_oxygens.append(oxygens)
+            list_carbons.append(carbons)
+            list_hydrogens.append(hydrogens)
 
     return (cell_params, np.array(list_oxygens), np.array(list_carbons), np.array(list_hydrogens))
