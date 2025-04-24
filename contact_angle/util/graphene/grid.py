@@ -5,6 +5,7 @@
 
 import numpy as np
 from scipy.interpolate import CloughTocher2DInterpolator
+from .sheet import C_C_DISTANCE
 
 #==================================================================================================
 
@@ -48,7 +49,8 @@ should be used when generating plots via imshow etc.."""
 def smooth_sheet(
         carbons: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
-        N: tuple[int, int] | int = 80
+        N: tuple[int, int] | int = 80, *,
+        margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
     """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
 calculates a 'smooth' sheet using the Clough-Tocher interpolator on the standard grid given by
@@ -70,6 +72,8 @@ at the gridpoints given by `generate_grid`."""
 
     shifts = np.array([[i, j, 0] for i in [-1, 0, 1] for j in [-1, 0, 1]]) * cell_params
     tiled_carbons = (carbons[None, :, :] + shifts[:, None, :]).reshape(-1, 3)
+    tiled_carbons = tiled_carbons[np.abs(tiled_carbons[:, 0]) < (0.5 * cell_xy[0]) + margin]
+    tiled_carbons = tiled_carbons[np.abs(tiled_carbons[:, 1]) < (0.5 * cell_xy[1]) + margin]
 
     real_grid = generate_grid(N, cell_xy)
     interp = CloughTocher2DInterpolator(tiled_carbons[:,0:2], tiled_carbons[:,2])
