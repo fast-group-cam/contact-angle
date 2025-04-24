@@ -55,12 +55,22 @@ The reported value is printed directly to console, and the final graphical outpu
 
 ## scripts/make-droplet-movie.py
 
-TODO: write this README!
+A Python script which takes a trajectory of a water droplet on graphene, displays it in a custom visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
+
+```
+python make-droplet-movie.py <input_file> [-o <output_file>] [--index <index>]
+```
+
+The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the simulation box lengths are fixed).
 
 
 ## scripts/plot-graphene.py
 
-TODO: write this README!
+A Python script which takes a trajectory of a graphene sheet (which may or may not have a water droplet on it), calculates its local inclination angle autocorrelation function, and plots it to a file. Use as:
+
+```
+python plot-graphene.py <input_file> [-o <output_file>] [--max_tau <max_tau>] [--N_x <N_x>] [--N_y <N_y>] [--max_threads <max_threads>] [--no-display]
+```
 
 
 ## util/droplet
