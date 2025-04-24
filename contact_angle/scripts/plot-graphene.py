@@ -7,7 +7,9 @@ prog_desc_header = '''
  a file. Use as:
 
      python plot-graphene.py <input_file> [-o <output_file>] [--max_tau <max_tau>] [--N_x <N_x>]
-         [--N_y <N_y>] [--max_threads <max_threads>] [--no-display]
+         [--N_y <N_y>] [--max_threads <max_threads>] [--z_range <z_range>]
+         [--z_fluc_range <z_fluc_range>] [--theta_range <theta_range>]
+         [--autocorr_range <autocorr_range>] [--no-display]
 
 ===================================================================================================
 '''
@@ -39,6 +41,10 @@ if __name__ == "__main__":
     parser.add_argument('-t', '--max_tau', type=int, default=30)
     parser.add_argument('-N', '--N_x', type=int, default=80)
     parser.add_argument('--N_y', type=int, default=None)
+    parser.add_argument('--z_range', type=float, default=None)
+    parser.add_argument('--z_fluc_range', type=float, default=None)
+    parser.add_argument('--theta_range', type=float, default=None)
+    parser.add_argument('--autocorr_range', type=float, default=None)
     parser.add_argument('--no-display', action='store_false', dest='opt_display')
     args = parser.parse_args()
 
@@ -48,6 +54,14 @@ if __name__ == "__main__":
         raise RuntimeError(f'File "{args.input_file}" not found.')
     if args.N_y is None:
         args.N_y = args.N_x
+    if args.z_range is not None:
+        args.z_range = 0.5 * abs(args.z_range)
+    if args.z_fluc_range is not None:
+        args.z_fluc_range = 0.5 * abs(args.z_fluc_range)
+    if args.theta_range is not None:
+        args.theta_range = 0.5 * abs(args.theta_range)
+    if args.autocorr_range is not None:
+        args.autocorr_range = min(0.5 * abs(args.autocorr_range), 0.5)
     
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
@@ -104,7 +118,14 @@ if __name__ == "__main__":
     fig.set_size_inches(9, 9)
     extent = (-0.5 * cell_xy[0], 0.5 * cell_xy[0], -0.5 * cell_xy[1], 0.5 * cell_xy[1])
 
-    im = ax[0][0].imshow(np.swapaxes(np.mean(sheet, axis=0), 0, 1), origin='lower', extent=extent)
+    data = np.swapaxes(np.mean(sheet, axis=0), 0, 1)
+    if args.z_range is None:
+        im = ax[0][0].imshow(data, origin='lower', extent=extent)
+    else:
+        midpoint = 0.5 * (np.min(data) + np.max(data))
+        vmax = midpoint + args.z_range
+        vmin = midpoint - args.z_range
+        im = ax[0][0].imshow(data, vmin=vmin, vmax=vmax, origin='lower', extent=extent)
     cbar = fig.colorbar(im, ax=ax[0][0], fraction=0.046, pad=0.04)
     cbar.set_label(r'$\langle z\rangle_t$')
     ax[0][0].set_xlabel(r'x ($\AA$)')
@@ -112,7 +133,17 @@ if __name__ == "__main__":
     ax[0][0].set_title('Time-averaged z-height')
     ax[0][0].set_aspect('equal')
     
-    im = ax[0][1].imshow(np.swapaxes(np.std(sheet, axis=0), 0, 1), origin='lower', extent=extent)
+    data = np.swapaxes(np.std(sheet, axis=0), 0, 1)
+    if args.z_fluc_range is None:
+        im = ax[0][1].imshow(data, origin='lower', extent=extent)
+    else:
+        midpoint = 0.5 * (np.min(data) + np.max(data))
+        vmax = midpoint + args.z_fluc_range
+        vmin = midpoint - args.z_fluc_range
+        if vmin < 0.0:
+            vmax -= vmin
+            vmin = 0.0
+        im = ax[0][1].imshow(data, vmin=vmin, vmax=vmax, origin='lower', extent=extent)
     cbar = fig.colorbar(im, ax=ax[0][1], fraction=0.046, pad=0.04)
     cbar.set_label(r'$\sigma_z$')
     ax[0][1].set_xlabel(r'x ($\AA$)')
@@ -120,7 +151,17 @@ if __name__ == "__main__":
     ax[0][1].set_title('Fluctuation width of z-height')
     ax[0][1].set_aspect('equal')
 
-    im = ax[1][0].imshow(np.swapaxes(np.mean(angles, axis=0), 0, 1), origin='lower', extent=extent)
+    data = np.swapaxes(np.mean(angles, axis=0), 0, 1)
+    if args.theta_range is None:
+        im = ax[1][0].imshow(data, origin='lower', extent=extent)
+    else:
+        midpoint = 0.5 * (np.min(data) + np.max(data))
+        vmax = midpoint + args.theta_range
+        vmin = midpoint - args.theta_range
+        if vmin < 0.0:
+            vmax -= vmin
+            vmin = 0.0
+        im = ax[1][0].imshow(data, vmin=vmin, vmax=vmax, origin='lower', extent=extent)
     cbar = fig.colorbar(im, ax=ax[1][0], fraction=0.046, pad=0.04)
     cbar.set_label(r'$\langle\theta\rangle_t$')
     ax[1][0].set_xlabel(r'x ($\AA$)')
@@ -128,7 +169,17 @@ if __name__ == "__main__":
     ax[1][0].set_title('Time-averaged local inclination angle')
     ax[1][0].set_aspect('equal')
 
-    im = ax[1][1].imshow(np.swapaxes(inf_autoc, 0, 1), origin='lower', extent=extent)
+    data = np.swapaxes(inf_autoc, 0, 1)
+    if args.autocorr_range is None:
+        im = ax[1][1].imshow(data, origin='lower', extent=extent)
+    else:
+        midpoint = 0.5 * (np.min(data) + np.max(data))
+        vmax = midpoint + args.autocorr_range
+        vmin = midpoint - args.autocorr_range
+        if vmax > 1.0:
+            vmin -= (vmax - 1.0)
+            vmax = 1.0
+        im = ax[1][1].imshow(data, vmin=vmin, vmax=vmax, origin='lower', extent=extent)
     cbar = fig.colorbar(im, ax=ax[1][1], fraction=0.046, pad=0.04)
     cbar.set_label(r'$C_{\theta}(\tau\to\infty)$')
     ax[1][1].set_xlabel(r'x ($\AA$)')
