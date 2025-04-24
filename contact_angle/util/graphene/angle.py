@@ -1,14 +1,14 @@
 import warnings
 import numpy as np
-from scipy.spatial import cKDTree
-from scipy.linalg import lstsq
+from numpy.lib.stride_tricks import sliding_window_view
 from scipy.optimize import curve_fit
-from .grid import cast_to_gridsize, generate_grid
+from .grid import cast_to_gridsize, generate_grid, smooth_sheet
+from .sheet import C_C_DISTANCE
 
 #==================================================================================================
 # Default parameters for local inclination angle
 
-NN_COUNT = 25    # Number of nearest neighbours to take for local environment
+CUTOFF_RADIUS = 4.5    # Cutoff radius (in angstroms)
 
 #==================================================================================================
 
@@ -16,7 +16,8 @@ def calc_inclination_angles(
         carbons: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT
+        cutoff: float = CUTOFF_RADIUS,
+        margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
     """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
 calculates the local inclination angle of the graphene sheet (wrt the z-axis) at a series of
@@ -39,35 +40,37 @@ representing the local inclination angles over the trajectory."""
         N_x, N_y = cast_to_gridsize(calc_points)
         results = np.zeros((N_frames, N_x, N_y), dtype=float)
         for f, c in enumerate(carbons):
-            results[f] = calc_inclination_angles(c, cell_xy, calc_points, nn_count=nn_count)
+            results[f] = calc_inclination_angles(c, cell_xy, calc_points,
+                                                 cutoff=cutoff, margin=margin)
         return results
 
     elif len(carbons.shape) == 2 and carbons.shape[-1] == 3:
 
-        cell_params = np.array((cell_xy[0], cell_xy[1], 0))
         pos = generate_grid(calc_points, cell_xy)
+        interp = smooth_sheet(carbons, cell_xy, calc_points, margin=margin)
+        points = np.c_[pos[:,:], interp[:,:,None]]
+        N_x, N_y = interp.shape
 
-        N_x = pos.shape[0]
-        N_y = pos.shape[1]
-        pos = pos.reshape(-1, 2)
+        k_x = int(cutoff * N_x / cell_xy[0])
+        k_y = int(cutoff * N_y / cell_xy[1])
+        window_size_x = (2 * k_x) + 1
+        window_size_y = (2 * k_y) + 1
+        padded = np.pad(points, ((k_x, k_x), (k_y, k_y), (0, 0)), mode='wrap')
+        padded[:k_x,:,0] -= cell_xy[0]
+        padded[-k_x:,:,0] += cell_xy[0]
+        padded[:,:k_y,1] -= cell_xy[1]
+        padded[:,-k_y:,1] += cell_xy[1]
 
-        shifts = np.array([[i, j, 0] for i in [-1, 0, 1] for j in [-1, 0, 1]]) * cell_params
-        tiled_carbons = (carbons[None, :, :] + shifts[:, None, :]).reshape(-1, 3)
-        tree = cKDTree(tiled_carbons[:, :2])
-        _, idxs = tree.query(pos, k=nn_count)
+        patches = sliding_window_view(padded, (window_size_x, window_size_y, 3))
+        patches = patches.reshape(N_x * N_y, window_size_x * window_size_y, 3)
+        patches -= patches.mean(axis=1, keepdims=True)
 
-        nearest_neighbours = tiled_carbons[idxs]
-        nearest_neighbours[:, :, :2] = nearest_neighbours[:, :, :2] - pos[:, None, :]
+        normals = np.empty((N_x * N_y, 3), dtype=float)
+        for i, patch in enumerate(patches):
+            normals[i] = np.linalg.svd(patch, full_matrices=False)[2][-1]
+            normals[i] /= np.linalg.norm(normals[i])
 
-        plane_coeffs = np.array([lstsq(np.c_[np.ones(nn_count),
-                                                diffs[:, :2],
-                                                np.prod(diffs[:, :2], axis=1),
-                                                np.square(diffs[:, :2])],
-                                        diffs[:, 2])[0][1:3] for diffs in nearest_neighbours])
-        cosines = np.power(np.sum(np.square(plane_coeffs), axis=-1) + 1, -0.5)
-        angles = np.arccos(cosines) * 180 / np.pi
-
-        return angles.reshape(N_x, N_y)
+        return (np.arccos(np.abs(normals[:,2])) * 180 / np.pi).reshape(N_x, N_y)
     
     else:
         raise RuntimeError(f'Unregonized input shape: carbons {carbons.shape}')
@@ -78,7 +81,8 @@ def mean_inclination_angles(
         carbons_traj: np.ndarray,
         cell_xy: np.ndarray | tuple[float, float],
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT
+        cutoff: float = CUTOFF_RADIUS,
+        margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
     """This function calculates the mean (time-averaged) local inclination angle of the graphene
 sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs are:
@@ -92,7 +96,8 @@ sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs
 The output is a np.NDArray of shape (N_x, N_y) representing the autocorrelation function, evaluated
 at the grid points and tau."""
 
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points,
+                                     cutoff=cutoff, margin=margin)
     return np.mean(angles, axis=0)
 
 #==================================================================================================
@@ -102,7 +107,8 @@ def inclination_autocorrelations(
         cell_xy: np.ndarray | tuple[float, float],
         tau: int = 0,
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT
+        cutoff: float = CUTOFF_RADIUS,
+        margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
     """This function calculates the autocorrelation function of the local inclination angle of the
 graphene sheet (wrt the z-axis) at a series of test points along the xy plane. The inputs are:
@@ -123,7 +129,8 @@ at the grid points and tau."""
         N_x, N_y = cast_to_gridsize(calc_points)
         return np.zeros((N_x, N_y), dtype=float)
     
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points,
+                                     cutoff=cutoff, margin=margin)
     if tau == 0:
         return np.mean(np.square(angles), axis=0)
     return np.mean(angles[:-tau] * angles[tau:], axis=0)
@@ -135,7 +142,8 @@ def inclination_norm_inf_autocor(
         cell_xy: np.ndarray | tuple[float, float],
         max_tau: int,
         calc_points: tuple[int, int] | int = 80, *,
-        nn_count: int = NN_COUNT
+        cutoff: float = CUTOFF_RADIUS,
+        margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
     """This function calculates the limit of the normalized autocorrelation function of the local
 inclination angle of the graphene sheet (wrt the z-axis) as the autocorrelation time goes to
@@ -154,7 +162,8 @@ normalized autocorrelation function, evaluated at the grid points."""
 
     N_x, N_y = cast_to_gridsize(calc_points)
     autocorr = np.zeros((max_tau, N_x, N_y), dtype=float)
-    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points, nn_count=nn_count)
+    angles = calc_inclination_angles(carbons_traj, cell_xy, calc_points,
+                                     cutoff=cutoff, margin=margin)
 
     autocorr[0] = np.mean(np.square(angles), axis=0)
     for tau in range(1, max_tau):
