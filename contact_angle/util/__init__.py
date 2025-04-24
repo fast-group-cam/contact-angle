@@ -1,5 +1,5 @@
 import time
-from .droplet.center_coordinates import center_coordinates, read_droplet_trajectory
+from .droplet.coordinates import center_coordinates, read_droplet_trajectory
 
 def elapsed_time(time_start: float) -> str:
     """Given a start time measured by `time.time()`, this function measures the time elapsed since
