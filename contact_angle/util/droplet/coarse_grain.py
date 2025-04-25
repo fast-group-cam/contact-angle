@@ -168,6 +168,9 @@ will be issued if the intersection cannot be found, in which case the output wil
     sliced = sliced[perpendiculars < slice_width**2]
     parallel_components = np.dot(sliced, axis)
     sliced = sliced[parallel_components > -slice_width]
+    if sliced.shape[0] == 0:
+        warnings.warn('No waters encountered along search axis')
+        return ((search_start, axis) if calc_normal else search_start)
 
     # Maximum z-coordinate to search
     if max_dist is None:
