@@ -20,7 +20,7 @@ from scipy.optimize import curve_fit
 from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_DENSITY,
                                                      find_interface)
-from contact_angle.util.droplet.plot import plot_density_xz_slice_multi
+from contact_angle.util.droplet.plot import plot_density_xz_slice
 
 if __name__ == "__main__":
 
@@ -138,9 +138,9 @@ if __name__ == "__main__":
     time_start = time.time()
 
     if N_frames < 30:
-        plot_density_xz_slice_multi(waters, carbons, ax[0][0])
+        plot_density_xz_slice(waters, carbons, ax[0][0])
     else:
-        plot_density_xz_slice_multi(waters[::int(N_frames / 30)], carbons, ax[0][0])
+        plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[0][0])
     ax[0][0].plot([-r_max, r_max], [CoM + COARSE_GRAIN_LENGTH, CoM + COARSE_GRAIN_LENGTH], '-',
                   color=(1, 0, 1))
     ax[0][0].plot([-r_max, r_max], [CoM - COARSE_GRAIN_LENGTH, CoM - COARSE_GRAIN_LENGTH], '-',
@@ -165,9 +165,9 @@ if __name__ == "__main__":
     ax[0][2].set_title(r'Cumulative count $N_{O}$ within CoM disk')
 
     if N_frames < 30:
-        plot_density_xz_slice_multi(waters, carbons, ax[1][0])
+        plot_density_xz_slice(waters, carbons, ax[1][0])
     else:
-        plot_density_xz_slice_multi(waters[::int(N_frames / 30)], carbons, ax[1][0])
+        plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[1][0])
     ax[1][0].plot([-COARSE_GRAIN_LENGTH, -COARSE_GRAIN_LENGTH],
                   [z_floor - COARSE_GRAIN_LENGTH, z_ceil], '-', color=(1, 0, 1))
     ax[1][0].plot([COARSE_GRAIN_LENGTH, COARSE_GRAIN_LENGTH],
