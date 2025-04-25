@@ -10,12 +10,16 @@ BULK_DENSITY = 0.033368      # Bulk density for liquid (in angstroms**(-3))
 SLICING_CUTOFF = 2           # Cutoff distance for slicing (in multiples of COARSE_GRAIN_LENGTH)
 DEFAULT_TOLERANCE = 0.01     # Accuracy tolerance for interface search (in angstroms)
 
+MAX_SIZE = 1e7               # Maximum size of numpy broadcasting operation (in size(float)s) for
+                             # memory protection
+
 #==================================================================================================
 
 def coarse_grained_density(
         pos: np.ndarray,
         waters: np.ndarray, *,
-        coarse_grain_length: float = COARSE_GRAIN_LENGTH
+        coarse_grain_length: float = COARSE_GRAIN_LENGTH,
+        max_size: int = MAX_SIZE
         ) -> float | np.ndarray:
     """This function calculates the coarse-grained density distribution, given the coordinates of
 the water molecules, at either one test point or a list of test points. The inputs are:
@@ -44,11 +48,41 @@ each position."""
     scaling = -0.5 / (coarse_grain_length**2)
 
     if pos.shape == (3,):
+
         dist = waters_unrolled - pos
         return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
+    
     elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-        dist = waters_unrolled[None,:,:] - pos[:,None,:]
-        return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
+
+        if (pos.shape[0] * waters_unrolled.shape[0] * 3) < max_size:
+            dist = waters_unrolled[None,:,:] - pos[:,None,:]
+            return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
+        else:
+            results = np.empty((pos.shape[0],), dtype=float)
+            for i, p in enumerate(pos):
+                dist = waters_unrolled - p
+                results[i] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
+            return results
+
+    elif len(pos.shape) == 3 and pos.shape[-1] == 3:
+
+        if (pos.shape[0] * pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
+            dist = waters_unrolled[None,None,:,:] - pos[:,:,None,:]
+            return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
+        elif (pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
+            results = np.empty((pos.shape[0], pos.shape[1]), dtype=float)
+            for i, p in enumerate(pos):
+                dist = waters_unrolled[None,:,:] - p[:,None,:]
+                results[i] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
+            return results
+        else:
+            results = np.empty((pos.shape[0], pos.shape[1]), dtype=float)
+            for i, row in enumerate(pos):
+                for j, p in enumerate(row):
+                    dist = waters_unrolled - p
+                    results[i,j] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
+            return results
+        
     else:
         raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
     
@@ -57,7 +91,8 @@ each position."""
 def coarse_grained_density_grad(
         pos: np.ndarray,
         waters: np.ndarray, *,
-        coarse_grain_length: float = COARSE_GRAIN_LENGTH
+        coarse_grain_length: float = COARSE_GRAIN_LENGTH,
+        max_size: int = MAX_SIZE
         ) -> float | np.ndarray:
     """This function calculates the gradient of the coarse-grained density distribution, given the
 coordinates of the water molecules, at either one test point or a list of test points. See
@@ -80,13 +115,47 @@ gradient at pos; and if it has shape (N_pos, 3), then the output is a np.NDArray
     scaling = -0.5 / (coarse_grain_length**2)
 
     if pos.shape == (3,):
+
         dist = waters_unrolled - pos
         return np.sum(prefactor * dist[:,:] *
                       np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
+    
     elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-        dist = waters_unrolled[None,:,:] - pos[:,None,:]
-        return np.sum(prefactor * dist[:,:,:] *
-                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
+
+        if (pos.shape[0] * waters_unrolled.shape[0] * 3) < max_size:
+            dist = waters_unrolled[None,:,:] - pos[:,None,:]
+            return np.sum(prefactor * dist[:,:,:] *
+                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
+        else:
+            results = np.empty((pos.shape[0], 3), dtype=float)
+            for i, p in enumerate(pos):
+                dist = waters_unrolled - p
+                results[i] = np.sum(prefactor * dist[:,:] *
+                                    np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
+            return results
+        
+    elif len(pos.shape) == 3 and pos.shape[-1] == 3:
+
+        if (pos.shape[0] * pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
+            dist = waters_unrolled[None,None,:,:] - pos[:,:,None,:]
+            return np.sum(prefactor * dist[:,:,:,:] *
+                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,:,None], axis=2)
+        elif (pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
+            results = np.empty((pos.shape[0], pos.shape[1], 3), dtype=float)
+            for i, p in enumerate(pos):
+                dist = waters_unrolled[None,:,:] - p[:,None,:]
+                results[i] = np.sum(prefactor * dist[:,:,:] *
+                                    np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
+            return results
+        else:
+            results = np.empty((pos.shape[0], pos.shape[1], 3), dtype=float)
+            for i, row in enumerate(pos):
+                for j, p in enumerate(row):
+                    dist = waters_unrolled - p
+                    results[i,j] = np.sum(prefactor * dist[:,:] *
+                                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
+            return results
+        
     else:
         raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
 
