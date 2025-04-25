@@ -35,7 +35,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='plot-graphene', description=prog_desc,
                                      usage='%(prog)s filename [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file')
+    parser.add_argument('input_file', nargs='+')
     parser.add_argument('-o', '--output', default='graphene.png')
     parser.add_argument('--index', default=':')
     parser.add_argument('-t', '--max_tau', type=int, default=30)
@@ -48,10 +48,11 @@ if __name__ == "__main__":
     parser.add_argument('--no-display', action='store_false', dest='opt_display')
     args = parser.parse_args()
 
+    for file in args.input_file:
+        if not os.path.isfile(file):
+            raise RuntimeError(f'File "{file}" not found.')
     if os.path.isfile(args.output):
         os.remove(args.output)
-    if not os.path.isfile(args.input_file):
-        raise RuntimeError(f'File "{args.input_file}" not found.')
     if args.N_y is None:
         args.N_y = args.N_x
     if args.z_range is not None:
@@ -69,7 +70,10 @@ if __name__ == "__main__":
     time_start = time.time()
     cell_params, _, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
     cell_xy = cell_params[0:2]
-    print(f'Read "{args.input_file}" in {elapsed_time(time_start)}.')
+    if len(args.input_file) == 1:
+        print(f'Read "{args.input_file[0]}" in {elapsed_time(time_start)}.')
+    else:
+        print(f'Read {len(args.input_file)} files in {elapsed_time(time_start)}.')
     
     #----------------------------------------------------------------------------------------------
     # Calculate interpolated z-heights
