@@ -5,7 +5,8 @@ prog_desc_header = '''
  Python script which takes a trajectory of a water droplet on graphene, displays it in a custom
  visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
 
-     python make-droplet-movie.py <input_file> [-o <output_file>] [--index <index>]
+     python make-droplet-movie.py <input_file(s)> [-o <output_file>] [--index <index>]
+         [--fps <framerate>]
 
  The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the
  simulation box lengths are fixed).
@@ -41,24 +42,31 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='make-droplet-movie', description=prog_desc,
                                      usage='%(prog)s filename [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file')
+    parser.add_argument('input_file', nargs='+')
     parser.add_argument('-o', '--output', default='movie.mp4')
     parser.add_argument('--index', default=':')
+    parser.add_argument('--fps', type=float, default=30)
     args = parser.parse_args()
 
+    for file in args.input_file:
+        if not os.path.isfile(file):
+            raise RuntimeError(f'File "{file}" not found.')
     if os.path.isfile(args.output):
         os.remove(args.output)
 
     #----------------------------------------------------------------------------------------------
     # Read input file and iterate through frames
 
-    print(f'Reading "{args.input_file}"...', end='')
+    if len(args.input_file) == 1:
+        print(f'Reading "{args.input_file[0]}"...', end='')
+    else:
+        print(f'Reading {len(args.input_file)} files...', end='')
     time_start_0 = time.time()
     time_start_1 = time.time()
     cell_params, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file,
                                                                        index=args.index)
     N_frames = carbons.shape[0]
-    print(f'read {N_frames} frames from "{args.input_file}" in {elapsed_time(time_start_1)}.')
+    print(f'read {N_frames} frames in {elapsed_time(time_start_1)}.')
 
     #----------------------------------------------------------------------------------------------
     # Generate movie
@@ -137,7 +145,8 @@ if __name__ == "__main__":
 
     print('complete, now rendering...')
     time_start_1 = time.time()
-    animation = anim.FuncAnimation(fig=fig, func=update, frames=N_frames, interval=30, blit=False)
+    animation = anim.FuncAnimation(fig=fig, func=update, frames=N_frames,
+                                   interval=int(np.round(1000 / args.fps)), blit=False)
     animation.save(filename=args.output, writer='ffmpeg')
     print(f'...done in {elapsed_time(time_start_1)}.')
     print(f'Program completed in {elapsed_time(time_start_0)}.')
