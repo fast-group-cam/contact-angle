@@ -5,8 +5,8 @@ prog_desc_header = '''
  Python script which takes a trajectory of a water droplet on graphene, displays it in a custom
  visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
 
-     python make-droplet-movie.py <input_file(s)> [-o <output_file>] [--index <index>]
-         [--fps <framerate>]
+ >    python make-droplet-movie.py <input_file(s)> [-o <output_file>] [--index <index>]
+          [--fps <framerate>]
 
  The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the
  simulation box lengths are fixed).
@@ -40,12 +40,16 @@ if __name__ == "__main__":
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
     parser = argparse.ArgumentParser(prog='make-droplet-movie', description=prog_desc,
-                                     usage='%(prog)s filename [options]',
+                                     usage='%(prog)s input_file [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file', nargs='+')
-    parser.add_argument('-o', '--output', default='movie.mp4')
-    parser.add_argument('--index', default=':')
-    parser.add_argument('--fps', type=float, default=30)
+    parser.add_argument('input_file', nargs='+',
+                        help='input file(s) to read data from')
+    parser.add_argument('-o', '--output', default='movie.mp4', dest='output',
+                        help='output filename to save the movie to')
+    parser.add_argument('--index', default=':', dest='index',
+                        help='slice of indices to take from each input file')
+    parser.add_argument('--fps', type=float, default=30, dest='framerate',
+                        help='framerate to render the movie at')
     args = parser.parse_args()
 
     for file in args.input_file:
@@ -146,7 +150,7 @@ if __name__ == "__main__":
     print('complete, now rendering...')
     time_start_1 = time.time()
     animation = anim.FuncAnimation(fig=fig, func=update, frames=N_frames,
-                                   interval=int(np.round(1000 / args.fps)), blit=False)
+                                   interval=int(np.round(1000 / args.framerate)), blit=False)
     animation.save(filename=args.output, writer='ffmpeg')
     print(f'...done in {elapsed_time(time_start_1)}.')
     print(f'Program completed in {elapsed_time(time_start_0)}.')

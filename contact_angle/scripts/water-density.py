@@ -6,7 +6,7 @@ prog_desc_header = '''
  traditional binning & counting methods, rather than the coarse-grained density function), and
  displays it in a custom visualization. Use as:
 
-     python water-density.py <input_file> [-o <output_file>] [--index <index>] [--N_bins <N_bins>]
+ >    python water-density.py <input_file> [-o <output_file>] [--index <index>] [--N_bins <N_bins>]
 
 ===================================================================================================
 '''
@@ -32,13 +32,18 @@ if __name__ == "__main__":
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
     parser = argparse.ArgumentParser(prog='water-density', description=prog_desc,
-                                     usage='%(prog)s filename [options]',
+                                     usage='%(prog)s input_file [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file', nargs='+')
-    parser.add_argument('-o', '--output', default='density.png')
-    parser.add_argument('--index', default=':')
-    parser.add_argument('-N', '--N_bins', type=int, default=100)
-    parser.add_argument('--no-display', action='store_false', dest='opt_display')
+    parser.add_argument('input_file', nargs='+',
+                        help='input file(s) to read data from')
+    parser.add_argument('-o', '--output', default='density.png', dest='output',
+                        help='output filename to save the plot to')
+    parser.add_argument('--index', default=':', dest='index',
+                        help='index or slice of indices to take from each input file')
+    parser.add_argument('-N', '--N_bins', type=int, default=100, dest='N_bins',
+                        help='number of bins within each coordinate slice')
+    parser.add_argument('--no-display', action='store_false', dest='opt_display',
+                        help='disable display of graphics')
     args = parser.parse_args()
 
     for file in args.input_file:

@@ -3,14 +3,19 @@
 prog_desc_header = '''
 ===================================================================================================
  Python script which takes a trajectory of a graphene sheet (which may or may not have a water
- droplet on it), calculates its local inclination angle autocorrelation function, and plots it to
+ droplet on it), calculates certain observables with regards to local dynamics, and plots them to
  a file. Use as:
 
-     python plot-graphene.py <input_file> [-o <output_file>] [--max_tau <max_tau>] [--N_x <N_x>]
-         [--N_y <N_y>] [--max_threads <max_threads>] [--z_range <z_range>]
-         [--z_fluc_range <z_fluc_range>] [--theta_range <theta_range>]
-         [--autocorr_range <autocorr_range>] [--no-display]
+ >    python plot-graphene.py <input_file> [-o <output_file>]  [--N_x <N_x>] [--N_y <N_y>]
+          [--max_tau <max_tau>] [--z_range <z_range>] [--z_fluc_range <z_fluc_range>] 
+          [--theta_range <theta_range>] [--autocorr_range <autocorr_range>] [--no-display]
 
+ The generated plots are calculated over a square grid of (x, y) coordinates, with resolution given
+ by N_x and N_y, and displays the following: in the top left, the time-averaged z-heights of the
+ sheet as interpolated by the Clough-Tocher method; in the top right, the fluctuation widths (i.e.
+ standard deviation) of z-heights over time; in the bottom left, the time-averaged local
+ inclination angles of the sheet; and in the bottom right, the normalized infinite-time
+ autocorrelations of the local inclination angles of the sheet.
 ===================================================================================================
 '''
 
@@ -33,19 +38,30 @@ if __name__ == "__main__":
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
     parser = argparse.ArgumentParser(prog='plot-graphene', description=prog_desc,
-                                     usage='%(prog)s filename [options]',
+                                     usage='%(prog)s input_file [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file', nargs='+')
-    parser.add_argument('-o', '--output', default='graphene.png')
-    parser.add_argument('--index', default=':')
-    parser.add_argument('-t', '--max_tau', type=int, default=30)
-    parser.add_argument('-N', '--N_x', type=int, default=80)
-    parser.add_argument('--N_y', type=int, default=None)
-    parser.add_argument('--z_range', type=float, default=None)
-    parser.add_argument('--z_fluc_range', type=float, default=None)
-    parser.add_argument('--theta_range', type=float, default=None)
-    parser.add_argument('--autocorr_range', type=float, default=None)
-    parser.add_argument('--no-display', action='store_false', dest='opt_display')
+    parser.add_argument('input_file', nargs='+',
+                        help='input file(s) to read data from')
+    parser.add_argument('-o', '--output', default='graphene.png', dest='output',
+                        help='output filename to save the plot to')
+    parser.add_argument('--index', default=':', dest='index',
+                        help='slice of indices to take from each input file')
+    parser.add_argument('-N', '--N_x', type=int, default=80, dest='N_x',
+                        help='resolution of plot in x-direction')
+    parser.add_argument('--N_y', type=int, default=None, dest='N_y',
+                        help='resolution of plot in y-direction (defaults to be the same as N_x)')
+    parser.add_argument('-t', '--max_tau', type=int, default=30, dest='max_tau',
+                        help='maximum timescale to calculate autocorrelations')
+    parser.add_argument('--z_range', type=float, default=None, dest='z_range',
+                        help='plotting range for mean z-heights')
+    parser.add_argument('--z_fluc_range', type=float, default=None, dest='z_fluc_range',
+                        help='plotting range for fluctuations of z-heights')
+    parser.add_argument('--theta_range', type=float, default=None, dest='theta_range',
+                        help='plotting range for mean local inclination angles')
+    parser.add_argument('--autocorr_range', type=float, default=None, dest='autocorr_range',
+                        help='plotting range for autocorrelations of local inclination angles')
+    parser.add_argument('--no-display', action='store_false', dest='opt_display',
+                        help='disable display of graphics')
     args = parser.parse_args()
 
     for file in args.input_file:
