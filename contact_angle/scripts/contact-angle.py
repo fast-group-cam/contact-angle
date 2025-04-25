@@ -12,32 +12,8 @@ prog_desc_header = '''
  The program takes some number of frames `N_frames` from the input file (which is specified by the
  user). The action of the program depends on the user inputs:
 
-   (1) If `N_frames` is 1 (default), the contact angle is measured as an instantaneous 'snapshot'
-       from the last frame of the file. The reported value is averaged over some number of
-       azimuthal slices (specified by `N_azimuths`), and the reported uncertainty is the standard
-       error of the mean. The program also generates a plot of the fit for each azimuthal slice,
-       over the water molecules' number density distribution.
+   (1) WIP
 
-   (2) If `N_frames` is greater than 1, and `block-average` is false (default), the contact angle
-       is measured for each and every frame, and the reported value is averaged over both azimuthal
-       slices and across frames (with reported uncertainty being the standard error of the mean).
-       The program then generates a plot of the contact angles measured for each azimuthal slice
-       for each frame, and also a plot of the azimuthal and time autocorrelation functions. Note
-       that the frames are sliced from the start of the file, with slicing interval specified by
-       `--interval`.
-
-   (3) If `N_frames` is greater than 1, `block-average` is true, and `auto` is true or `b` is
-       unspecified, the program will proceed as per mode #2, except that, instead of reporting the
-       standard error of the mean, the program performs reverse cumulative averaging over a range
-       of block sizes to identify a block size with statistical inefficiency within the upper
-       quartile of statistical inefficiencies (refer to DOI:10.1063/1.1638996); the reported
-       uncertainty is the standard error of the block means at this block size. The program also
-       additionally generates a plot of the statistical inefficiency as a function of block size.
-
-   (4) If `N_frames` is greater than 1, `block-average` is true, `auto` is false (default), and
-       `b` is specified, the program will proceed as per mode #3 (performing reverse cumulative
-       averaging over a range of blocksizes), but the reported uncertainty will be calculated using
-       the user-specified blocksize.
 ===================================================================================================
 '''
 
@@ -48,518 +24,410 @@ import argparse
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
-import ase
-import ase.io
-
-from contact_angle.util import center_coordinates
+from scipy.optimize import curve_fit
+from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet import find_interface
-from contact_angle.util.droplet.coarse_grain import COARSE_GRAIN_LENGTH, SLICING_CUTOFF, BULK_DENSITY
 from contact_angle.util.droplet.plot import plot_density_xz_slice
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import LinearSegmentedColormap, Normalize
-
 
 #==================================================================================================
-# Function declaration: contact_angles
+# Helper function
 
-def contact_angles(waters: np.ndarray, carbons: np.ndarray, N_azimuths: int, rot_angle: float,
-                   fig: Figure = None, axes: list[Axes] = None) -> tuple[np.ndarray, float]:
-    """This high-level function processes the contact angles over a range of azimuthal directions,
-given the pre-processed coordinates of the system, for a single frame. It also plots the density
-distribution to a PyPlot Figure if provided (as needed for program mode (1)). The inputs are:
+def find_interfaces_and_normals(
+        waters: np.ndarray,
+        carbons: np.ndarray,
+        search_directions: np.ndarray,
+        z_foot: float,
+        carbon_radius_sq: float
+        ) -> tuple[np.ndarray, np.ndarray]:
+    """This function takes in a trajectory of water molecules on a graphene sheet, and finds the
+time-averaged Willard-Chandler interface and its normals along a list of planar search directions.
+The inputs are:
 
-    waters:      The Cartesian coordinates of the water molecules.
-    carbons:     The Cartesian coordinates of the carbon atoms.
-    N_azimuths:  The number of azimuthal slices to scan.
-    rot_angle:   The rotational angle to rotate between azimuthal slices, in degrees.
-    fig:         If provided, the PyPlot figure to render to.
-    axes:        If provided, the list of PyPlot axes to render to.
+    - `waters`: The coordinates of the water molecules, with shape (N_frames, N_water, 3), which
+    will be collated together.
+    - `carbons`: The coordinates of the carbon atoms, with shape (N_frames, N_carbon, 3), which
+    will be collated together.
+    - `search_directions`: The directions to the search along, with shape (N_directions, 3); note
+    that they should all be perpendicular to the z-axis!
+    - `z_foot`: The defining height of the droplet foot above the graphene sheet.
+    - `carbon_radius_sq`: The square of the cutoff radius for searching for nearby carbon atoms
+    to define the local sheet z-coordinate.
 
-The output is a tuple, where the first item is a np.NDArray of shape (2 * N_azimuths,) representing
-the instantaneous contact angles of this frame over the range of azimuthal directions, and the
-second item is a float representing the highest value of the coarse-grained density distribution
-encountered in this frame.
-    """
+The output is a tuple of two NDArrays, both of shape (N_directions, 3), representing the locations
+and normals of the interface points along the search directions."""
 
-    # Calculate droplet height
-    droplet_h = find_interface(waters, (0, 0, 0), (0, 0, 1))[2]
+    # Sanitizing input shapes
+    if len(waters.shape) != 3 or waters.shape[-1] != 3:
+        raise RuntimeError(f'Unrecognized input shape: waters {waters.shape}, should be ' +
+                           '(N_frames, N_water, 3)')
+    if len(carbons.shape) != 3 or carbons.shape[-1] != 3:
+        raise RuntimeError(f'Unrecognized input shape: carbons {carbons.shape}, should be ' +
+                           '(N_frames, N_carbon, 3)')
+    N_frames = waters.shape[0]
+    if N_frames != carbons.shape[0]:
+        raise RuntimeError(f'Inconsistent number of frames in waters ({N_frames}) and carbons ' +
+                           f'({carbons.shape[0]})!')
+    flat_carbons = carbons.reshape(-1, 3)
 
-    # Pre-calculate rotation matrix for iterating through azimuthal slices
-    rot_matrix = np.array(((np.cos(rot_angle * np.pi/180), -np.sin(rot_angle * np.pi/180), 0.0),
-                           (np.sin(rot_angle * np.pi/180), np.cos(rot_angle * np.pi/180),  0.0),
-                           (0.0,                           0.0,                            1.0)))
+    # Calculate droplet CoM and floor
+    CoM = np.mean(waters, axis=(0, 1))
+    droplet_floor = find_interface(waters, CoM, (0, 0, -1))[2]
     
-    # Pre-calculate z-coordinate to search for each azimuthal slice
-    SLICING_WIDTH = SLICING_CUTOFF * COARSE_GRAIN_LENGTH
-    z_floor = np.min(waters[:,2])
-    droplet_thickness = droplet_h - z_floor
-    highest_scan_z = z_floor + (0.2 * droplet_thickness)
-    cutoff_z = highest_scan_z + SLICING_WIDTH
+    # Iterate through search directions
+    interfaces = list()
+    normals = list()
+    for search_dir in search_directions:
 
-    # Iterate through azimuthal slices
-    angles = np.zeros((2 * N_azimuths,), dtype=float)
-    highest_density = 0.0
-    for azi in range(N_azimuths):
+        # First guess of interface
+        inter = find_interface(waters, (0, 0, droplet_floor + z_foot), search_dir)
 
-        # Cut out only most relevant waters
-        sliced = waters[waters[:,1] < SLICING_WIDTH]
-        sliced = sliced[sliced[:,1] > -SLICING_WIDTH]
-        sliced = sliced[sliced[:,2] < cutoff_z]
-        l_waters = sliced[sliced[:,0] < SLICING_WIDTH]
-        r_waters = sliced[sliced[:,0] > -SLICING_WIDTH]
-        carbon_slice = carbons[carbons[:,1] < SLICING_WIDTH]
-        carbon_slice = carbon_slice[carbon_slice[:,1] > -SLICING_WIDTH]
-        
-        # Find left interface
-        l_inter, l_inter_norm = find_interface(l_waters, (0, 0, highest_scan_z), (-1, 0, 0),
-                                               calc_normal=True)
+        # Find z-coordinate of graphene sheet underneath first guess
+        nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - inter[0:2]),
+                                     axis=-1) < carbon_radius_sq]
+        sheet_z = np.mean(nearby[:,2])
 
-        # Find closest carbon atoms to the left interface, and calculate their normal vector
-        l_inter_foot = np.zeros((3,), dtype=float)
-        l_inter_foot[0] = l_inter[0] + (l_inter[2] * l_inter_norm[2] / l_inter_norm[0])
-        carbon_dists_sq = np.sum(np.square(carbon_slice - l_inter_foot), axis=-1)
-        closest_carbons = carbon_slice[np.argpartition(carbon_dists_sq, 30)[:30]]
-        l_carbon_c = np.mean(closest_carbons, axis=0)
-        l_carbon_l = l_carbon_c[0] - np.min(closest_carbons[:,0])
-        l_carbon_r = np.max(closest_carbons[:,0]) - l_carbon_c[0]
-        l_carbon_norm = np.linalg.svd((closest_carbons - l_carbon_c).T)[0][:,-1]
-        if l_carbon_norm[2] < 0.0:
-            l_carbon_norm = -l_carbon_norm
+        # Second guess of interface (and repeat refinement)
+        #inter = find_interface(waters, (inter[0] - search_dir[0], inter[1] - search_dir[1],
+        #                                sheet_z + z_foot), search_dir)
+        inter = find_interface(waters, (0, 0, sheet_z + z_foot), search_dir)
+        nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - inter[0:2]),
+                                     axis=-1) < carbon_radius_sq]
+        sheet_z = np.mean(nearby[:,2])
 
-        # Calculate the left contact angle
-        cosine = np.dot(l_inter_norm, l_carbon_norm)
-        cosine /= np.linalg.norm(l_inter_norm)
-        cosine /= np.linalg.norm(l_carbon_norm)
-        angles[azi] = np.arccos(cosine) * 180.0 / np.pi
-        
-        # Find right interface
-        r_inter, r_inter_norm = find_interface(r_waters, (0, 0, highest_scan_z), (1, 0, 0),
-                                               calc_normal=True)
+        # Third and final guess of interface
+        #inter, norm = find_interface(waters, (inter[0] - search_dir[0], inter[1] - search_dir[1],
+        #                                      sheet_z + z_foot), search_dir, calc_normal=True)
+        inter, norm = find_interface(waters, (0, 0, sheet_z + z_foot), search_dir, calc_normal=True)
+        interfaces.append(inter)
+        normals.append(norm)
 
-        # Find closest carbon atoms to the right interface, and calculate their normal vector
-        r_inter_foot = np.zeros((3,), dtype=float)
-        r_inter_foot[0] = r_inter[0] + (r_inter[2] * r_inter_norm[2] / r_inter_norm[0])
-        carbon_dists_sq = np.sum(np.square(carbon_slice - r_inter_foot), axis=-1)
-        closest_carbons = carbon_slice[np.argpartition(carbon_dists_sq, 30)[:30]]
-        r_carbon_c = np.mean(closest_carbons, axis=0)
-        r_carbon_l = r_carbon_c[0] - np.min(closest_carbons[:,0])
-        r_carbon_r = np.max(closest_carbons[:,0]) - r_carbon_c[0]
-        r_carbon_norm = np.linalg.svd((closest_carbons - r_carbon_c).T)[0][:,-1]
-        if r_carbon_norm[2] < 0.0:
-            r_carbon_norm = -r_carbon_norm
-
-        # Calculate the right contact angle
-        cosine = np.dot(r_inter_norm, r_carbon_norm)
-        cosine /= np.linalg.norm(r_inter_norm)
-        cosine /= np.linalg.norm(r_carbon_norm)
-        angles[azi + N_azimuths] = np.arccos(cosine) * 180.0 / np.pi
-
-        # If available, plot diagram
-        if (fig is not None) and (azi < len(axes)):
-
-            # Plot density function, carbons, and full instantaneous interface
-            plot_density_xz_slice(waters, carbon_slice, axes[azi], show_interface=True,
-                                  color_inter=(1, 0, 1, 0.5))
-
-            # Plot carbon planes
-            point_a_x = l_carbon_c[0] - l_carbon_l
-            point_a_z = l_carbon_c[2] + (l_carbon_l * l_carbon_norm[0] / l_carbon_norm[2])
-            point_b_x = l_carbon_c[0] + l_carbon_r
-            point_b_z = l_carbon_c[2] - (l_carbon_r * l_carbon_norm[0] / l_carbon_norm[2])
-            axes[azi].plot((point_a_x, point_b_x), (point_a_z, point_b_z), 'k-')
-            point_a_x = r_carbon_c[0] - r_carbon_l
-            point_a_z = r_carbon_c[2] + (r_carbon_l * r_carbon_norm[0] / r_carbon_norm[2])
-            point_b_x = r_carbon_c[0] + r_carbon_r
-            point_b_z = r_carbon_c[2] - (r_carbon_r * r_carbon_norm[0] / r_carbon_norm[2])
-            axes[azi].plot((point_a_x, point_b_x), (point_a_z, point_b_z), 'k-')
-
-            # Plot water interfaces
-            point_b_z = 2.0 * l_inter[2]
-            point_b_x = l_inter[0] - (l_inter[2] * l_inter_norm[2] / l_inter_norm[0])
-            axes[azi].plot((l_inter_foot[0], point_b_x), (0.0, point_b_z), '-', color=(1.0, 0.0, 1.0))
-            point_b_z = 2.0 * r_inter[2]
-            point_b_x = r_inter[0] - (r_inter[2] * r_inter_norm[2] / r_inter_norm[0])
-            axes[azi].plot((r_inter_foot[0], point_b_x), (0.0, point_b_z), '-', color=(1.0, 0.0, 1.0))
-
-            # Final formatting
-            axes[azi].text(0.01, 0.99, (r'$\theta_{left}\;=\;' + str(round(angles[azi], 1))
-                           + r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
-                           str(round(angles[azi + N_azimuths], 1)) + r'\degree$'),
-                           horizontalalignment='left', verticalalignment='top',
-                           transform = axes[azi].transAxes)
-            axes[azi].set_title(r'$\varphi = ' + str(round(azi * rot_angle, 1)) + r'\degree$')
-            axes[azi].set_xlabel(r'r ($\AA$)')
-            axes[azi].set_ylabel(r'z ($\AA$)')
-            axes[azi].set_xlim(left=np.min(carbon_slice[:,0]) - COARSE_GRAIN_LENGTH,
-                               right=np.max(carbon_slice[:,0]) + COARSE_GRAIN_LENGTH)
-            axes[azi].set_ylim(bottom=np.min(carbon_slice[:,2]) - COARSE_GRAIN_LENGTH,
-                               top=1.5 * droplet_h)
-            axes[azi].set_aspect(1)
-
-        # Rotate azimuthal slice
-        waters = np.einsum('jk,ik->ij', rot_matrix, waters)
-        carbons = np.einsum('jk,ik->ij', rot_matrix, carbons)
-
-    return (angles, highest_density)
-
+    return (np.array(interfaces), np.array(normals))
 
 #==================================================================================================
 # Start of program flow
 
 if __name__ == "__main__":
 
-    # Generate program description
+    #----------------------------------------------------------------------------------------------
+    # Script default parameters
+
+    N_AZIMUTHS = 60    # Number of azimuthal directions to analyze per frame
+    Z_FOOT = 5         # Height of the droplet foot above the graphene sheet (in angstroms)
+    MAX_TAU = 25       # Maximum timescale to calculate autocorrelations (in number of frames)
+
+    from contact_angle.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH,
+                                                         SLICING_CUTOFF,
+                                                         BULK_DENSITY)
+    SLICING_WIDTH = SLICING_CUTOFF * COARSE_GRAIN_LENGTH
+
+    from contact_angle.util.graphene.angle import CUTOFF_RADIUS as CARBON_RADIUS
+    CARBON_RADIUS_SQ = CARBON_RADIUS**2
+
+    #----------------------------------------------------------------------------------------------
+    # Generate program description and parse input arguments
+
     prog_desc = ''
     for line in prog_desc_header.splitlines()[2:-1]:
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
 
-    # Read script inputs from command line interface
-    argparser = argparse.ArgumentParser(prog='contact-angle', description=prog_desc,
-                                        usage='%(prog)s filename [options]',
-                                        formatter_class=argparse.RawDescriptionHelpFormatter)
-    argparser.add_argument('filename', help='input file to read data from')
-    argparser.add_argument('-N', '--N_frames', '-n', type=int, default=1, dest='N_frames',
-                        help='number of frames to extract from the start of the input file')
-    argparser.add_argument('-i', '--interval', type=int, default=1, dest='interval',
-                        help='slicing interval for extraction of frames')
-    argparser.add_argument('--N_azimuths', type=int, default=1, dest='N_azimuths',
+    parser = argparse.ArgumentParser(prog='contact-angle', description=prog_desc,
+                                     usage='%(prog)s input_file [options]',
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('input_file', nargs='+',
+                        help='input file(s) to read data from')
+    parser.add_argument('--index', default=':', dest='index',
+                        help='index or slice of indices to take from each input file')
+    parser.add_argument('--N_azimuths', type=int, default=N_AZIMUTHS, dest='N_azimuths',
                         help='number of azimuthal angles to analyze per frame')
-    argparser.add_argument('--block-average', action='store_true', dest='block_average',
-                        help=('perform reverse cumulative averaging for unbiased uncertainty '
-                                'estimates over varying block sizes'))
-    argparser.add_argument('--auto', action='store_true', dest='opt_auto',
-                        help=('if --block-average is turned on, enforces the automatic '
-                                'determination of block size (overrides --blocksize)'))
-    argparser.add_argument('-b', '--blocksize', type=int, default=None, dest='blocksize',
-                        help=('if --block-average is turned on, disables automatic determination '
-                                'of block size and enforces manually specified block size (unless '
-                                '--auto was turned on)'))
-    argparser.add_argument('--units', default='A', dest='units',
-                        help='length units of coordinates in the input file (default angstroms)')
-    argparser.add_argument('-o', default='output.png', dest='output_filename',
-                        help='output file to save graphics to')
-    argparser.add_argument('--no-save', action='store_false', dest='opt_save',
-                        help='disable saving of graphics to output file')
-    argparser.add_argument('--no-display', action='store_false', dest='opt_display',
-                        help='disable display of graphics')
+    parser.add_argument('--local', action='store_true', dest='local',
+                        help='use local definition of graphene inclination')
+    parser.add_argument('--z_foot', type=float, default=Z_FOOT, dest='z_foot',
+                        help='height (in angstroms) of the droplet foot above the graphene sheet')
+    parser.add_argument('--max_tau', type=int, default=MAX_TAU, dest='max_tau',
+                        help='maximum timescale (in no. of frames) to calculate autocorrelations')
+    parser.add_argument('--block-average', action='store_true', dest='block_average',
+                        help=('perform reverse cumulative averaging for unbiased uncertainty ' +
+                              'estimates over varying block sizes'))
+    parser.add_argument('-b', '--blocksize', type=int, default=None, dest='blocksize',
+                        help=('if --block-average is turned on, disables automatic block sizing ' +
+                              'and enforces specified block size'))
+    parser.add_argument('-o', '--output', default='contact-angle', dest='output',
+                        help='output folder to save log and graphical outputs to')
+    args = parser.parse_args()
 
-    prog_args = argparser.parse_args()
+    for file in args.input_file:
+        if not os.path.isfile(file):
+            raise RuntimeError(f'File "{file}" not found.')
 
-    # Checking filename
-    if not os.path.isfile(prog_args.filename):
-        raise RuntimeError(f'File "{prog_args.filename}" not found.')
+    if args.N_azimuths < 1:
+        raise RuntimeError(f'N_azimuths ({args.N_azimuths}) must be positive.')
+    if args.z_foot < 0.0:
+        raise RuntimeError(f'z_foot ({args.z_foot}) must be positive.')
+    if args.max_tau < 2:
+        raise RuntimeError(f'Max tau ({args.max_tau}) must be at least 2.')
+    if args.blocksize is None:
+        args.opt_auto = True
+    elif args.blocksize < 1:
+        raise RuntimeError(f'Block size ({args.blocksize}) must be positive.')
 
-    # Checking N_frames and interval
-    if prog_args.N_frames < 1:
-        raise RuntimeError(f'Number of frames ({prog_args.N_frames}) must be positive!')
-    if prog_args.interval < 1:
-        raise RuntimeError(f'Frame slicing interval ({prog_args.interval}) must be positive!')
-    if prog_args.N_azimuths < 1:
-        raise RuntimeError(f'Number of azimuthal angles ({prog_args.N_azimuths}) must be positive!')
-
-    # Checking units
-    length_scaling_factor = 1.0
-    prog_args.units = prog_args.units.lower()
-    if prog_args.units in {'a', 'aa', 'ang', 'angstrom', 'angstroms'}:
-        length_scaling_factor = 1.0
-    elif prog_args.units in {'f', 'fm', 'fermi', 'femto', 'femtometer', 'femtometre'}:
-        length_scaling_factor = 0.00001
-    elif prog_args.units in {'p', 'pm', 'pico', 'picometer', 'picometre'}:
-        length_scaling_factor = 0.01
-    elif prog_args.units in {'n', 'nm', 'nano', 'nanometer', 'nanometre'}:
-        length_scaling_factor = 10.0
-    elif prog_args.units in {'u', 'um', 'mu', 'micron', 'micro', 'micrometer', 'micrometre'}:
-        length_scaling_factor = 10000.0
-    else:
-        raise RuntimeError(f'Units "{prog_args.units}" not recognized.')
-
-    # Check block averaging options
-    if prog_args.blocksize is None:
-        prog_args.opt_auto = True
-    elif prog_args.blocksize < 1:
-        raise RuntimeError(f'Block size ({prog_args.blocksize}) must be positive.')
-
-    print(f'\nReading "{prog_args.filename}"...', end='')
-    time_start = time.time()
+    if not os.path.isdir(args.output):
+        os.mkdir(args.output)
 
     #----------------------------------------------------------------------------------------------
-    # Program mode (1):  Contact angle is measured as an instantaneous 'snapshot' from the last
-    # frame of the file. The angle is averaged over azimuthal slices. The program also generates a
-    # plot of the fit for each azimuthal slice over the water density if N_azimuths is less than 7;
-    # otherwise the plot is generated only for the first azimuthal slice.
+    # Helper functions
 
-    if prog_args.N_frames == 1:
+    def exp_curve(x, A, k, c):
+        return A * np.exp(-k * x) + c
 
-        atoms = ase.io.read(prog_args.filename)
+    def exp_fit(data, k0 = 0.5, c0 = 0.5):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                popt, _ = curve_fit(exp_curve, list(range(data.shape[0])), data, p0=(1 - c0, k0, c0))
+            return popt
+        except RuntimeError:
+            mu = np.mean(data)
+            return np.array((1 - mu, np.inf, mu))
 
-        # Check if atomic numbers are assigned correctly in the file and reassign if needed
-        element_numbers = np.unique(atoms.numbers)
-        if np.array_equal(element_numbers, [1, 2, 3]):
-            atoms.numbers[atoms.numbers == 1] = 6
-            atoms.numbers[atoms.numbers == 2] = 1
-            atoms.numbers[atoms.numbers == 3] = 8
-        elif np.array_equal(element_numbers, [1, 6, 8]):
-            pass
-        else:
-            raise RuntimeError('Unidentified atomic numbers in file!')
-        
-        # Process coordinates
-        cell_params = atoms.cell.cellpar()[0:3]
-        waters, carbons, _ = center_coordinates(atoms, np.array(cell_params))
-        time_end = time.time()
-        print(f'done in {(time_end - time_start):.3f} s.')
+    def plot_against_time_and_azimuth(fig, ax, data, title, var_label):
+        N_x = data.shape[0]
+        N_y = data.shape[1]
+        im = ax.imshow(data.T, origin='lower', extent=(-0.5, N_x - 0.5, -180/N_y, 360 - (180/N_y)))
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label(var_label)
+        ax.set_aspect(N_x / 360)
+        ax.set_xlabel('Frame number')
+        ax.set_ylabel(r'$\varphi\;\;(\degree)$')
+        ax.set_title(title)
+        if N_x < 16:
+            ax.set_xticks(list(range(N_x)))
+        if N_y < 16:
+            ax.set_yticks(np.linspace(0, 360, N_y, endpoint=False))
 
-        # Create matplotlib figure to generate plots
-        if prog_args.opt_save or prog_args.opt_display:
-            if prog_args.N_azimuths == 2:
-                fig, fig_ax = plt.subplots(1, 2, layout='constrained')
-                axes = [fig_ax[0], fig_ax[1]]
-                fig.set_size_inches(13, 3.12)
-            elif prog_args.N_azimuths == 3:
-                fig, fig_ax = plt.subplots(2, 2, layout='constrained')
-                axes = [fig_ax[0][0], fig_ax[0][1], fig_ax[1][0]]
-                fig_ax[1][1].set_axis_off()
-                fig.set_size_inches(13, 6.24)
-            elif prog_args.N_azimuths == 4:
-                fig, fig_ax = plt.subplots(2, 2, layout='constrained')
-                axes = [fig_ax[0][0], fig_ax[0][1], fig_ax[1][0], fig_ax[1][1]]
-                fig.set_size_inches(13, 6.24)
-            elif prog_args.N_azimuths == 5:
-                fig, fig_ax = plt.subplots(2, 3, layout='constrained')
-                axes = [fig_ax[0][0], fig_ax[0][1], fig_ax[0][2], fig_ax[1][0], fig_ax[1][1]]
-                fig_ax[1][2].set_axis_off()
-                fig.set_size_inches(13, 4.216)
-            elif prog_args.N_azimuths == 6:
-                fig, fig_ax = plt.subplots(2, 3, layout='constrained')
-                axes = [fig_ax[0][0], fig_ax[0][1], fig_ax[0][2],
-                        fig_ax[1][0], fig_ax[1][1], fig_ax[1][2]]
-                fig.set_size_inches(13, 4.216)
-            else:
-                fig, fig_ax = plt.subplots(layout='constrained')
-                axes = [fig_ax,]
-                fig.set_size_inches(13, 6)
-            highest_density = 0.0
-        
-        # Calculate contact angles
-        print('Calculating contact angles...', end='')
-        time_start = time.time()
-        if prog_args.opt_save or prog_args.opt_display:
-            angles, highest_density = contact_angles(waters, carbons, prog_args.N_azimuths,
-                                                    180 / prog_args.N_azimuths, fig, axes)
-        else:
-            angles, highest_density = contact_angles(waters, carbons, prog_args.N_azimuths,
-                                                    180 / prog_args.N_azimuths)
-        time_end = time.time()
-        print(f'done in {(time_end - time_start):.3f} s.')
+    #----------------------------------------------------------------------------------------------
+    # Read input file and save coordinates
 
-        # Output result
-        angle = np.mean(angles)
-        error = np.std(angles) / np.sqrt(angles.shape[0] - 1)
-        dp = int(np.ceil(-np.log10(error))) + 1
-        print(f'\nContact angle = {round(angle, dp)} \u00b1 {round(error, dp)}\u00b0\n')
-
-        # Final formatting of axes etc.
-        if prog_args.opt_save or prog_args.opt_display:
-            
-            # Align all axes to same range
-            leftest_left = np.inf
-            rightest_right = -np.inf
-            bottomest_bottom = np.inf
-            toppest_top = -np.inf
-            for axis in axes:
-                left, right = axis.get_xlim()
-                leftest_left = min(leftest_left, left)
-                rightest_right = max(rightest_right, right)
-                bottom, top = axis.get_ylim()
-                bottomest_bottom = min(bottomest_bottom, bottom)
-                toppest_top = max(toppest_top, top)
-            for axis in axes:
-                axis.set_xlim(left=leftest_left, right=rightest_right)
-                axis.set_ylim(bottom=bottomest_bottom, top=toppest_top)
-
-            # Custom colorbar for the density function
-            if highest_density < BULK_DENSITY:
-                cdict = {'red': [(0.0, 1.0, 1.0), (1.0, 0.0, 0.0)],
-                            'green': [(0.0, 1.0, 1.0), (1.0, 0.0, 0.0)],
-                            'blue': [(0.0, 1.0, 1.0), (1.0, 1.0, 1.0)]}
-                fig.colorbar(ScalarMappable(norm=Normalize(vmin=0.0, vmax=BULK_DENSITY),
-                            cmap=LinearSegmentedColormap('', segmentdata=cdict, N=256)),
-                            ax=fig_ax, orientation='vertical', fraction=0.046, pad=0.04, shrink=0.8,
-                            label=r'Number density ($\AA^{-3}$)')
-            elif highest_density < 2 * BULK_DENSITY:
-                extent = BULK_DENSITY / highest_density
-                excess = (highest_density / BULK_DENSITY) - 1.0
-                cdict = {'red': [(0.0, 1.0, 1.0), (extent, 0.0, 0.0), (1.0, excess, excess)],
-                            'green': [(0.0, 1.0, 1.0), (extent, 0.0, 0.0), (1.0, 0.0, 0.0)],
-                            'blue': [(0.0, 1.0, 1.0), (extent, 1.0, 1.0), (1.0, 1.0 - excess, 1.0 - excess)]}
-                fig.colorbar(ScalarMappable(norm=Normalize(vmin=0.0, vmax=highest_density),
-                            cmap=LinearSegmentedColormap('', segmentdata=cdict, N=256)),
-                            ax=fig_ax, orientation='vertical', fraction=0.046, pad=0.04, shrink=0.8,
-                            label=r'Number density ($\AA^{-3}$)')
-            else:
-                extent = BULK_DENSITY / highest_density
-                cdict = {'red': [(0.0, 1.0, 1.0), (extent, 0.0, 0.0),
-                                    (2 * extent, 1.0, 1.0), (1.0, 1.0, 1.0)],
-                            'green': [(0.0, 1.0, 1.0), (extent, 0.0, 0.0), (1.0, 0.0, 0.0)],
-                            'blue': [(0.0, 1.0, 1.0), (extent, 1.0, 1.0),
-                                    (2 * extent, 0.0, 0.0), (1.0, 0.0, 0.0)]}
-                fig.colorbar(ScalarMappable(norm=Normalize(vmin=0.0, vmax=highest_density),
-                            cmap=LinearSegmentedColormap('', segmentdata=cdict, N=256)),
-                            ax=fig_ax, orientation='vertical', fraction=0.046, pad=0.04, shrink=0.8,
-                            label=r'Number density ($\AA^{-3}$)')
-
-        # Save output & display (if relevant), then quit
-        if prog_args.opt_save:
-            fig.savefig(prog_args.output_filename, dpi=fig.dpi)
-        if prog_args.opt_display:
-            plt.show()
-
-        # TEMPORARY
-        fig, ax = plt.subplots()
-        ax.plot(np.linspace(0, 360, angles.shape[0]), angles)
-        fig.savefig('tmp.png', dpi=(3 * fig.dpi))
-        plt.show()
-
-        sys.exit()
-
-    #--------------------------------------------------------------------------------------------------
-    # Program modes (2), (3), (4): Contact angle is measured over multiple frames (with multiple
-    # azimuthal slices per frame) to obtain statistics of contact angles over both frame number and
-    # azimuthal angle; the final reported quantity is derived from these statistics.
-
+    if len(args.input_file) == 1:
+        print(f'Reading "{args.input_file[0]}"...', end='')
     else:
+        print(f'Reading {len(args.input_file)} files...', end='')
+    time_start_0 = time.time()
+    cell_params, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
+    N_frames = waters.shape[0]
+    N_water = waters.shape[1]
+    N_carbon = carbons.shape[1]
+    print(f'read {N_frames} frames of {N_water} water molecules and {N_carbon} carbon atoms in ' +
+          f'{elapsed_time(time_start_0)}.')
 
-        traj = ase.io.iread(prog_args.filename, index=slice(0, prog_args.N_frames * prog_args.interval,
-                                                            prog_args.interval))
-        print()
-        angles = np.zeros((prog_args.N_frames, 2 * prog_args.N_azimuths), dtype=float)
-        cell_params = None
-        need_to_reassign = None
-        rot_angle = 180 / prog_args.N_azimuths
-        frame_counter = 0
-        for atoms in traj:
+    #----------------------------------------------------------------------------------------------
+    # Create output log file
 
-            print(f'    - Processing frame #{frame_counter}...', end='')
-            frame_time_start = time.time()
+    log_file = open(os.path.join(args.output, 'log.txt'), 'w', encoding='utf-8')
 
-            # Get cell parameters
-            if cell_params is None:
-                cell_params = np.array(atoms.cell.cellpar()[0:3])
+    #----------------------------------------------------------------------------------------------
+    # Calculate instantaneous interfaces for every frame and measure autocorrelations etc.
 
-            # Check if atomic numbers are assigned correctly in the file...
-            if need_to_reassign is None:
-                element_numbers = np.unique(atoms.numbers)
-                if np.array_equal(element_numbers, [1, 2, 3]):
-                    need_to_reassign = True
-                elif np.array_equal(element_numbers, [1, 6, 8]):
-                    need_to_reassign = False
-                else:
-                    raise RuntimeError('Unidentified atomic numbers in file!')
-                
-            # ...and reassign if needed
-            if need_to_reassign:
-                atoms.numbers[atoms.numbers == 1] = 6
-                atoms.numbers[atoms.numbers == 2] = 1
-                atoms.numbers[atoms.numbers == 3] = 8
-            
-            # Process this frame
-            waters, carbons, _ = center_coordinates(atoms, cell_params)
-            angles[frame_counter,:], highest_density = contact_angles(waters, carbons,
-                                                                    prog_args.N_azimuths, rot_angle)
-            frame_time_end = time.time()
-            print(f'done in {(frame_time_end - frame_time_start):.3f} s.')
-            frame_counter += 1
-            
-        time_end = time.time()
-        print(f'...done in {(time_end - time_start):.3f} s.')
-        if prog_args.block_average and frame_counter < 9:
-            warnings.warn('Cannot perform block averaging with less than 9 frames', RuntimeWarning)
-            prog_args.block_average = False
+    time_start_1 = time.time()
+    print('Computing instantaneous interfaces for every frame...')
 
-        # Calculate result and output
-        if prog_args.block_average:
+    azi = np.linspace(0, 2 * np.pi, args.N_azimuths, endpoint=False)
+    search_directions = np.c_[np.cos(azi), np.sin(azi), np.zeros_like(azi)]
+    search_perp = np.c_[-np.sin(azi), np.cos(azi)]
 
-            blocksize_max = int(frame_counter / 3)
-            blocksize_step = max(int(blocksize_max / 32), 1)
-            blocksizes = list(range(1, blocksize_max + 1, blocksize_step))
-            if (not prog_args.opt_auto) and (prog_args.blocksize not in blocksizes):
-                blocksizes.append(prog_args.blocksize)
-                blocksizes.sort()
-            
-            block_means = np.zeros((len(blocksizes),), dtype=float)
-            block_vars = np.zeros((len(blocksizes),), dtype=float)
-            block_counts = np.zeros((len(blocksizes),), dtype=int)
-            for blocksize_index in range(len(blocksizes)):
-                size = blocksizes[blocksize_index]
-                start_indices = list(range(0, frame_counter, size))
-                block_counts[blocksize_index] = len(start_indices) - 1
-                data = np.zeros((block_counts[blocksize_index],), dtype=float)
-                for b in range(block_counts[blocksize_index]):
-                    data[b] = np.median(angles[start_indices[b]:start_indices[b+1]])
-                block_means[blocksize_index] = np.mean(data)
-                block_vars[blocksize_index] = np.var(data)
-            blocksizes = np.array(blocksizes)
+    contact_angles = np.empty((N_frames, args.N_azimuths), dtype=float)
+    ooplane_angles = np.empty((N_frames, args.N_azimuths), dtype=float)
 
-            stat_inefficiencies = blocksizes * block_vars / block_vars[0]
-            if prog_args.opt_auto:
-                k = int(blocksizes.shape[0] * 0.75)
-                chosen_index = np.argpartition(stat_inefficiencies, k)[k]
-            else:
-                chosen_index = np.argwhere(blocksizes == prog_args.blocksize)[0,0]
+    for f in range(N_frames):
 
-            angle = block_means[chosen_index]
-            error = np.sqrt(block_vars[chosen_index] / (block_counts[chosen_index] - 1))
-            dp = int(np.ceil(-np.log10(error))) + 1
-            print(f'\nIdentified ideal block-median size of {blocksizes[chosen_index]} frames')
-            print(f'Mean block-medianed contact angle = {round(angle, dp)} \u00b1 {round(error, dp)}\u00b0')
-            print(f'(Overall median value: {round(np.median(angles), dp)}\u00b0)\n')
-
-            if prog_args.opt_display:
-                fig, axis = plt.subplots(1, 2)
-                fig.set_size_inches(13, 8)
-                axis[0].plot(blocksizes, stat_inefficiencies, 'bo')
-                axis[0].plot((blocksizes[chosen_index],), (stat_inefficiencies[chosen_index],), 'rs')
-                axis[0].set_title('Statistical inefficiency against blocksize')
-                axis[0].set_xlabel('Blocksize')
-                axis[0].set_ylabel('Statistical inefficiency (arb. units)')
-                axis[1].errorbar(blocksizes, block_means, yerr=np.sqrt(block_vars / (block_counts - 1)), fmt='bo')
-                axis[1].errorbar((blocksizes[chosen_index],), (angle,), yerr=(error,), fmt='rs')
-                axis[1].set_title('Mean of block medians against blocksize')
-                axis[1].set_xlabel('Blocksize')
-                axis[1].set_ylabel('Mean of block medians (\u00b0)')
-                plt.show()
-
+        interfaces, normals = find_interfaces_and_normals(waters[f:f+1], carbons[f:f+1],
+                                                          search_directions, z_foot=args.z_foot,
+                                                          carbon_radius_sq=CARBON_RADIUS_SQ)
+        
+        if args.local:
+            for i, inter in enumerate(interfaces):
+                nearby = carbons[f, np.sum(np.square(carbons[f,:,0:2] - inter[0:2]), axis=-1) < CARBON_RADIUS_SQ]
+                local_norm = np.linalg.svd(nearby - np.mean(nearby, axis=0), full_matrices=False)[2][-1]
+                local_norm /= np.linalg.norm(local_norm)
+                if local_norm[2] < 0:
+                    local_norm *= -1
+                contact_angles[f, i] = np.arccos(np.dot(normals[i], local_norm)) * 180 / np.pi
         else:
-            angle = np.mean(angles)
-            error = np.std(angles) / np.sqrt(angles.shape[0] - 1)
-            dp = int(np.ceil(-np.log10(error))) + 1
-            print(f'\nContact angle = {round(angle, dp)} \u00b1 {round(error, dp)}\u00b0')
-            print(f'(Median value: {round(np.median(angles), dp)}\u00b0)\n')
+            contact_angles[f] = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
 
-        # If desired, display results
-        if prog_args.opt_save or prog_args.opt_display:
-            fig, axis = plt.subplots()
-            fig.set_size_inches(12, 9)
-            graphic = axis.imshow(angles.T, origin='lower', extent=(-0.5, frame_counter - 0.5,
-                                                                    -0.5 * rot_angle, 360 - (0.5 * rot_angle)))
-            axis.set_aspect(frame_counter / 360)
-            axis.set_xlabel('Frame number')
-            axis.set_ylabel(r'$\varphi\;\;(\degree)$')
-            if prog_args.N_azimuths < 11:
-                axis.set_yticks(np.linspace(0, 360, 2 * prog_args.N_azimuths, endpoint=False))
-            if frame_counter < 11:
-                axis.set_xticks(np.linspace(0, frame_counter, frame_counter, endpoint=False))
-            fig.colorbar(graphic, ax=axis)
-            if prog_args.opt_save:
-                fig.savefig(prog_args.output_filename, dpi=fig.dpi)
-            if prog_args.opt_display:
-                plt.show()
+        proj_normals = np.power(np.sum(np.square(normals[:,0:2]), axis=-1), -0.5)[:,None] * normals[:,0:2]
+        ooplane_angles[f] = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+    
+    time_start_2 = time.time()
+    print(f'    - computed instantaneous interfaces in {elapsed_time(time_start_1)}...')
+    print('    - calculating time correlations...', end='')
 
-        # TEMPORARY
-        fig, ax = plt.subplots()
-        ax.errorbar(list(range(frame_counter)), np.mean(angles, axis=1), yerr=np.std(angles, axis=1))
-        plt.show()
+    max_tau = min(N_frames - 1, args.max_tau)
+    contact_angle_time_corrs = np.empty((max_tau,), dtype=float)
+    contact_angle_time_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
+    for tau in range(1, max_tau):
+        contact_angle_time_corrs[tau] = np.mean(contact_angles[:-tau] * contact_angles[tau:], axis=(0,1))
+    contact_angle_time_corrs[:] /= contact_angle_time_corrs[0]
+    contact_angle_time_popt = exp_fit(contact_angle_time_corrs, k0=1.0, c0=0.998)
 
-        sys.exit()
+    ooplane_angle_time_corrs = np.empty((max_tau,), dtype=float)
+    ooplane_angle_time_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
+    for tau in range(1, max_tau):
+        ooplane_angle_time_corrs[tau] = np.mean(ooplane_angles[:-tau] * ooplane_angles[tau:], axis=(0,1))
+    ooplane_angle_time_corrs[:] /= ooplane_angle_time_corrs[0]
+    ooplane_angle_time_popt = exp_fit(ooplane_angle_time_corrs, k0=0.5, c0=0.1)
+
+    print(f'done in {elapsed_time(time_start_2)}.')
+    print('    - calculating azimuthal correlations...', end='')
+    time_start_2 = time.time()
+
+    max_a = int(args.N_azimuths / 2)
+    contact_angle_azi_corrs = np.empty((max_a,), dtype=float)
+    contact_angle_azi_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
+    for a in range(1, max_a):
+        contact_angle_azi_corrs[a] = np.mean(contact_angles[:,:-a] * contact_angles[:,a:], axis=(0,1))
+    contact_angle_azi_corrs[:] /= contact_angle_azi_corrs[0]
+    contact_angle_azi_popt = exp_fit(contact_angle_azi_corrs, k0=1.0, c0=0.978)
+    contact_angle_azi_popt[1] *= args.N_azimuths / 360
+
+    ooplane_angle_azi_corrs = np.empty((max_a,), dtype=float)
+    ooplane_angle_azi_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
+    for a in range(1, max_a):
+        ooplane_angle_azi_corrs[a] = np.mean(ooplane_angles[:,:-a] * ooplane_angles[:,a:], axis=(0,1))
+    ooplane_angle_azi_corrs[:] /= ooplane_angle_azi_corrs[0]
+    ooplane_angle_azi_corrs = np.abs(ooplane_angle_azi_corrs)
+    ooplane_angle_azi_popt = exp_fit(ooplane_angle_azi_corrs, k0=10.0, c0=0.05)
+    ooplane_angle_azi_popt[1] *= args.N_azimuths / 360
+
+    print(f'done in {elapsed_time(time_start_2)}.')
+    print(f'Done in {elapsed_time(time_start_1)}.')
+
+    fig = plt.figure(figsize=(14, 7), layout='constrained')
+    subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
+    plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), contact_angles,
+                                  'Instantaneous contact angles', r'$\theta(t,\varphi)$')
+    ax = subfigs[1].subplots(2, 1)
+    tau = np.linspace(0, max_tau, 3 * max_tau, endpoint=False)
+    ax[0].plot(tau, exp_curve(tau, *contact_angle_time_popt), 'b--')
+    ax[0].plot(list(range(max_tau)), contact_angle_time_corrs, 'r.')
+    ax[0].set_xlabel(r'$\tau$  (frames)')
+    ax[0].set_ylabel(r'$C_{\theta}(\tau)$')
+    ax[0].set_title('Normalized autocorrelation of contact angle against time')
+    phi = np.linspace(0, 180, 3 * max_a, endpoint=False)
+    ax[1].plot(phi, exp_curve(phi, *contact_angle_azi_popt), 'b--')
+    ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), contact_angle_azi_corrs, 'r.')
+    ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
+    ax[1].set_ylabel(r'$C_{\theta}(\varphi)$')
+    ax[1].set_title('Normalized autocorrelation of contact angle against azimuth')
+    fig.savefig(os.path.join(args.output, 'inst_contact_angles.png'), dpi=(3*fig.dpi),
+                bbox_inches='tight', pad_inches=0.05)
+    
+    fig = plt.figure(figsize=(14, 7), layout='constrained')
+    subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
+    plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), ooplane_angles,
+                                  'Instantaneous interfacial out-of-plane angles', r'$\delta$')
+    ax = subfigs[1].subplots(2, 1)
+    ax[0].plot(tau, exp_curve(tau, *ooplane_angle_time_popt), 'b--')
+    ax[0].plot(list(range(max_tau)), ooplane_angle_time_corrs, 'r.')
+    ax[0].set_xlabel(r'$\tau$  (frames)')
+    ax[0].set_ylabel(r'$C_{\delta}(\tau)$')
+    ax[0].set_title('Normalized autocorrelation of out-of-plane angle against time')
+    ax[1].plot(phi, exp_curve(phi, *ooplane_angle_azi_popt), 'b--')
+    ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), ooplane_angle_azi_corrs, 'r.')
+    ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
+    ax[1].set_ylabel(r'$C_{\delta}(\varphi)$')
+    ax[1].set_title('Normalized autocorrelation of out-of-plane angle against azimuth')
+    fig.savefig(os.path.join(args.output, 'inst_out-of-plane_angles.png'), dpi=(3*fig.dpi),
+                bbox_inches='tight', pad_inches=0.05)
+
+    log_file.write('-------------------------\n')
+    log_file.write(' Instantaneous interface\n')
+    log_file.write('-------------------------\n\n')
+    log_file.write(f'Mean contact angle = {np.mean(contact_angles)} [deg]\n')
+    log_file.write(f'Median contact angle = {np.median(contact_angles)} [deg]\n')
+    log_file.write(f'Contact angle stdev = {np.std(contact_angles)} [deg]\n\n')
+    log_file.write(f'Contact angle correlation time = {1 / contact_angle_time_popt[1]} [frames]\n')
+    log_file.write(f'Contact angle azimuthal correlation scale = {1 / contact_angle_azi_popt[1]} [deg]\n\n')
+    log_file.write(f'Mean out-of-plane angle = {np.mean(ooplane_angles)} [deg]\n')
+    log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
+    log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
+    log_file.write(f'Out-of-plane angle correlation time = {1 / ooplane_angle_time_popt[1]} [frames]\n')
+    log_file.write(f'Out-of-plane angle azimuthal correlation scale = {1 / ooplane_angle_azi_popt[1]} [deg]\n\n')
+
+    #----------------------------------------------------------------------------------------------
+    # Calculate time-averaged interface across all frames
+
+    time_start_1 = time.time()
+    print('Computing time-averaged interface...')
+
+    azi = np.linspace(0, 2 * np.pi, 12, endpoint=False)
+    search_directions = np.c_[np.cos(azi), np.sin(azi), np.zeros_like(azi)]
+    search_perp = np.c_[-np.sin(azi), np.cos(azi)]
+    interfaces, normals = find_interfaces_and_normals(waters, carbons, search_directions,
+                                                      z_foot=args.z_foot,
+                                                      carbon_radius_sq=CARBON_RADIUS_SQ)
+    if args.local:
+        flat_carbons = carbons.reshape(-1, 3)
+        contact_angles = np.empty((12,), dtype=float)
+        for i, inter in enumerate(interfaces):
+            nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - inter[0:2]), axis=-1) < CARBON_RADIUS_SQ]
+            local_norm = np.linalg.svd(nearby - np.mean(nearby, axis=0), full_matrices=False)[2][-1]
+            local_norm /= np.linalg.norm(local_norm)
+            if local_norm[2] < 0:
+                local_norm *= -1
+            contact_angles[i] = np.arccos(np.dot(normals[i], local_norm)) * 180 / np.pi
+    else:
+        contact_angles = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
+
+    proj_normals = np.power(np.sum(np.square(normals[:,0:2]), axis=-1), -0.5)[:,None] * normals[:,0:2]
+    ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+
+    # TODO: implement spherical radius calculation
+
+    time_start_2 = time.time()
+    print(f'    - computed time-averaged interface in {elapsed_time(time_start_1)}.')
+    print('    - plotting time-averaged density functions...', end='')
+
+    # TODO: plot normals, plot spherical best-fit
+
+    fig, ax = plt.subplots(2, 3)
+    fig.set_size_inches(15, 6)
+    interval = max(int(N_frames * N_water / 2e5), 1)
+    for i in range(2):
+        for j in range(3):
+            angle = azi[(3 * i) + j]
+            rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
+                                   (-np.sin(angle), np.cos(angle), 0.0),
+                                   (0.0,            0.0,           1.0)))
+            rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
+            rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
+            plot_density_xz_slice(rot_waters, rot_carbons, ax[i][j], show_interface=True,
+                                  color_inter = (1.0, 0.0, 1.0, 0.5))
+            ax[i][j].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
+    fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
+    fig.savefig(os.path.join(args.output, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
+                bbox_inches='tight', pad_inches=0.05)
+    
+    log_file.write('-------------------------\n')
+    log_file.write(' Time-averaged interface\n')
+    log_file.write('-------------------------\n\n')
+    log_file.write(f'Mean contact angle = {np.mean(contact_angles)} [deg]\n')
+    log_file.write(f'Median contact angle = {np.median(contact_angles)} [deg]\n')
+    log_file.write(f'Contact angle stdev = {np.std(contact_angles)} [deg]\n\n')
+    log_file.write(f'Mean out-of-plane angle = {np.mean(ooplane_angles)} [deg]\n')
+    log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
+    log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
+
+    print(f'Done in {elapsed_time(time_start_1)}.')
+
+    #----------------------------------------------------------------------------------------------
+    # Calculate time-averaged interface across all frames
+
+    if args.block_average:
+        print('Sorry, block averaging not implemented yet -- WIP!')
+
+    #----------------------------------------------------------------------------------------------
+    # End of program
+
+    print(f'Program completed in {elapsed_time(time_start_0)}.')
+    log_file.close()
+    sys.exit()
