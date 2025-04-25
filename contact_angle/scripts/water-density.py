@@ -17,7 +17,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from contact_angle.util import read_droplet_trajectory
+from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_DENSITY,
                                                      find_interface)
 from contact_angle.util.droplet.plot import plot_density_xz_slice_multi
@@ -34,24 +34,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='water-density', description=prog_desc,
                                      usage='%(prog)s filename [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('input_file')
+    parser.add_argument('input_file', nargs='+')
     parser.add_argument('-o', '--output', default='density.png')
     parser.add_argument('--index', default=':')
     parser.add_argument('-N', '--N_bins', type=int, default=100)
     parser.add_argument('--no-display', action='store_false', dest='opt_display')
     args = parser.parse_args()
 
+    for file in args.input_file:
+        if not os.path.isfile(file):
+            raise RuntimeError(f'File "{file}" not found.')
     if os.path.isfile(args.output):
         os.remove(args.output)
-    if not os.path.isfile(args.input_file):
-        raise RuntimeError(f'File "{args.input_file}" not found.')
     
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
     time_start = time.time()
     cell_params, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
-    print(f'Read "{args.input_file}" in {(time.time() - time_start):.3f}s.')
+    if len(args.input_file) == 1:
+        print(f'Read "{args.input_file[0]}" in {elapsed_time(time_start)}.')
+    else:
+        print(f'Read {len(args.input_file)} files in {elapsed_time(time_start)}.')
 
     #----------------------------------------------------------------------------------------------
     # Calculate outer limits of the droplet
@@ -75,7 +79,7 @@ if __name__ == "__main__":
         z_floor = min(z_floor, find_interface(waters[f], CoM, (0, 0, -1))[2])
     
     print(f'Found droplet maximal radius to be {r_max:.2f}\u212b and height to be ' +
-          f'{(z_ceil - z_floor):.2f}\u212b (time taken: {(time.time() - time_start):.3f}s).')
+          f'{(z_ceil - z_floor):.2f}\u212b (time taken: {elapsed_time(time_start)}).')
 
     #----------------------------------------------------------------------------------------------
     # Calculate density bins
@@ -110,7 +114,7 @@ if __name__ == "__main__":
     axial_bin_counts /= N_frames
     axial_density = axial_bin_counts / (np.pi * (COARSE_GRAIN_LENGTH**2) * axial_bin_height)
 
-    print(f'Calculated density distribution in {(time.time() - time_start):.3f}s.')
+    print(f'Calculated density distribution in {elapsed_time(time_start)}.')
 
     #----------------------------------------------------------------------------------------------
     # Plot results
@@ -182,7 +186,7 @@ if __name__ == "__main__":
     ax[1][2].set_ylabel(r'$N_{O}(z)$')
     ax[1][2].set_title(r'Cumulative count $N_{O}$ along central axis')
 
-    print(f'Computed plots in {(time.time() - time_start):.3f}s.')
+    print(f'Computed plots in {elapsed_time(time_start)}.')
     fig.tight_layout()
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
     if args.opt_display:
