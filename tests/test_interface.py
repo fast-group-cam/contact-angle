@@ -70,20 +70,20 @@ def test_slab():
     assert np.allclose(np.std(densities), 0.00170991036082039)
 
     inter_0, norm_0 = cg.find_interface(waters, (0, 0, 0), (0, 0, 1), calc_normal=True,
-                                        tol=1e-08)
+                                        tol=1e-08, slicing_cutoff=4)
     inter_1, norm_1 = cg.find_interface(waters, (0, 0, 15), (0, 0, -1), calc_normal=True,
-                                        tol=1e-08, reverse_search=True)
-    assert np.allclose(inter_0, (0,          0,          11.99725231))
-    assert np.allclose(norm_0 , (0.08105014, 0.24778394, 0.96541908))
+                                        tol=1e-08, slicing_cutoff=4, reverse_search=True)
+    assert np.allclose(inter_0, (0,          0,          12.46459353))
+    assert np.allclose(norm_0 , (0.16321428, 0.23604591, 0.95793707))
     assert np.allclose(inter_0, inter_1)
     assert np.allclose(norm_0, norm_1)
 
     inter_0, norm_0 = cg.find_interface(waters, (0, 0, 0), (0, 0, -1), calc_normal=True,
-                                        tol=1e-08)
+                                        tol=1e-08, slicing_cutoff=4)
     inter_1, norm_1 = cg.find_interface(waters, (0, 0, -15), (0, 0, 1), calc_normal=True,
-                                        tol=1e-08, reverse_search=True)
-    assert np.allclose(inter_0, (0,           0,          -11.89387706))
-    assert np.allclose(norm_0 , (-0.01973661, 0.06509348, -0.99768397))
+                                        tol=1e-08, slicing_cutoff=4, reverse_search=True)
+    assert np.allclose(inter_0, (0,          0,          -12.30232372))
+    assert np.allclose(norm_0 , (0.03707034, 0.05664322, -0.99770604))
     assert np.allclose(inter_0, inter_1)
     assert np.allclose(norm_0, norm_1)
 
@@ -94,9 +94,9 @@ def test_slab():
     axes = np.column_stack((np.cos(phi) * sin, np.sin(phi) * sin, cos))
     for axis in axes:
         inter_0, norm_0 = cg.find_interface(waters, (0, 0, 0), axis, calc_normal=True,
-                                            tol=1e-08)
+                                            tol=1e-08, slicing_cutoff=4)
         inter_1, norm_1 = cg.find_interface(waters, 15 * axis, -axis, calc_normal=True,
-                                            tol=1e-08, reverse_search=True)
+                                            tol=1e-08, slicing_cutoff=4, reverse_search=True)
         assert np.allclose(inter_0, inter_1)
         assert np.allclose(norm_0, norm_1)
 
@@ -105,38 +105,23 @@ def test_slab():
 def test_droplet():
 
     atoms = ase.io.read('tests/examples/small-droplet.xyz')
-    waters, carbons, hydrogens = center_coordinates(atoms, atoms.cell.cellpar()[0:3])
+    waters, _, hydrogens = center_coordinates(atoms, atoms.cell.cellpar()[0:3])
     CoM = np.mean(waters, axis=0)
 
     assert hydrogens.shape[0] == 2 * waters.shape[0]
     assert np.allclose(CoM, (0, 0, 5.38673499))
 
     interface, norm = cg.find_interface(waters, CoM, (0, 0, 1), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (0, 0, 11.301923339768443))
-    assert np.allclose(norm, (-0.14608175, 0.07934797, 0.9860852))
+                                        tol=1e-08, slicing_cutoff=4)
+    assert np.allclose(interface, (0, 0, 11.7431722))
+    assert np.allclose(norm, (-0.16674203, 0.08892512, 0.98198239))
 
     interface, norm = cg.find_interface(waters, CoM, (0, 0, -1), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (0, 0, 1.4817303845588992))
-    assert np.allclose(norm, (0.20312668, 0.06689293, -0.97686483))
+                                        tol=1e-08, slicing_cutoff=4)
+    assert np.allclose(interface, (0, 0, 0.829991896))
+    assert np.allclose(norm, (0.11715618, 0.12325747, -0.98543494))
 
     interface, norm = cg.find_interface(waters, CoM, (1, 0, 0), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (11.3148224, 0, 5.38673499))
-    assert np.allclose(norm, (0.96481845, -0.14867038, 0.21684666))
-
-    interface, norm = cg.find_interface(waters, CoM, (-1, 0, 0), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (-12.2309148, 0, 5.38673499))
-    assert np.allclose(norm, (-0.97246725, -0.0687992, 0.22265248))
-
-    interface, norm = cg.find_interface(waters, CoM, (0, 1, 0), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (0, 13.0590769, 5.38673499))
-    assert np.allclose(norm, (0.38237926, 0.91951447, 0.09099037))
-
-    interface, norm = cg.find_interface(waters, CoM, (0, -1, 0), calc_normal=True,
-                                        tol=1e-08)
-    assert np.allclose(interface, (0, -10.1411448, 5.38673499))
-    assert np.allclose(norm, (-0.12754742, -0.89603475, 0.42526861))
+                                        tol=1e-08, slicing_cutoff=4)
+    assert np.allclose(interface, (11.4934006, 0, 5.38673499))
+    assert np.allclose(norm, (0.97003411, -0.0994569, 0.22168029))

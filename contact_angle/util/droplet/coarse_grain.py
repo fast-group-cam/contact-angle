@@ -166,6 +166,8 @@ will be issued if the intersection cannot be found, in which case the output wil
     perpendiculars = sliced - (parallel_components[:, None] * axis[None, :])
     perpendiculars = np.sum(np.square(perpendiculars), axis=-1)
     sliced = sliced[perpendiculars < slice_width**2]
+    parallel_components = np.dot(sliced, axis)
+    sliced = sliced[parallel_components > -slice_width]
 
     # Maximum z-coordinate to search
     if max_dist is None:
