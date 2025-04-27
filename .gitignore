@@ -26,3 +26,11 @@ build/
 .idea/
 .vscode/
 .venv/
+
+###########################
+# Temporary/testing files #
+###########################
+
+tmp*.py
+tmp*.png
+tmp*.txt
