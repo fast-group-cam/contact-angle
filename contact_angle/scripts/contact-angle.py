@@ -24,77 +24,11 @@ import argparse
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+
 from scipy.optimize import curve_fit
 from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet import find_interface
-from contact_angle.util.droplet.coarse_grain import COARSE_GRAIN_LENGTH
 from contact_angle.util.droplet.plot import plot_density_xz_slice
-
-#==================================================================================================
-# Helper function
-
-def find_interfaces_and_normals(
-        waters: np.ndarray,
-        search_directions: np.ndarray,
-        z_foot: float
-        ) -> tuple[np.ndarray, np.ndarray]:
-    """This function takes in a trajectory of water molecules on a graphene sheet, and finds the
-time-averaged Willard-Chandler interface and its normals along a list of planar search directions.
-The inputs are:
-
-    - `waters`: The coordinates of the water molecules, with shape (N_frames, N_water, 3), which
-    will be collated together.
-    - `carbons`: The coordinates of the carbon atoms, with shape (N_frames, N_carbon, 3), which
-    will be collated together.
-    - `search_directions`: The directions to the search along, with shape (N_directions, 3); note
-    that they should all be perpendicular to the z-axis!
-    - `z_foot`: The defining height of the droplet foot above the droplet floor.
-    - `carbon_radius_sq`: The square of the cutoff radius for searching for nearby carbon atoms
-    to define the local sheet z-coordinate.
-
-The output is a tuple of two NDArrays, both of shape (N_directions, 3), representing the locations
-and normals of the interface points along the search directions."""
-
-    # Sanitizing input shapes
-    if len(waters.shape) != 3 or waters.shape[-1] != 3:
-        raise RuntimeError(f'Unrecognized input shape: waters {waters.shape}, should be ' +
-                           '(N_frames, N_water, 3)')
-
-    # Calculate droplet CoM and floor
-    CoM = np.mean(waters, axis=(0, 1))
-    droplet_h = find_interface(waters, CoM, (0, 0, 1))[2]
-    droplet_floor = find_interface(waters, CoM, (0, 0, -1))[2]
-    if droplet_h - droplet_floor < z_foot:
-        warnings.warn('Droplet is too short at the CoM, bad behaviour may occur')
-    
-    # Iterate through search directions
-    interfaces = list()
-    normals = list()
-    for search_dir in search_directions:
-
-        # First guess of interface
-        inter = find_interface(waters, (0, 0, droplet_floor + z_foot), search_dir)
-
-        # Find z-coordinate of droplet floor underneath first guess
-        local_floor = find_interface(waters, inter, (0, 0, -1))[2]
-
-        # Second guess of interface (and repeat refinement)
-        step_back = min(np.dot(inter, search_dir), 2 * COARSE_GRAIN_LENGTH) * search_dir
-        inter = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                        local_floor + z_foot), search_dir)
-        local_floor = find_interface(waters, inter, (0, 0, -1))[2]
-
-        # Third and final guess of interface
-        step_back = min(np.dot(inter, search_dir), 2 * COARSE_GRAIN_LENGTH) * search_dir
-        inter, norm = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                              local_floor + z_foot), search_dir, calc_normal=True)
-        interfaces.append(inter)
-        normals.append(norm)
-
-    return (np.array(interfaces), np.array(normals))
-
-#==================================================================================================
-# Start of program flow
 
 if __name__ == "__main__":
 
@@ -102,7 +36,8 @@ if __name__ == "__main__":
     # Script default parameters
 
     N_AZIMUTHS = 60       # Number of azimuthal directions to analyze per frame
-    Z_FOOT = 5.0          # Height of the droplet foot above the graphene sheet (in angstroms)
+    Z_FOOT = 7.5          # Height of the droplet foot above the graphene sheet (in angstroms)
+    STEP_BACK = 10        # Step back per iteration of foot-finding algorithm (in angstroms)
     MAX_TAU = 25          # Maximum timescale to calculate autocorrelations (in number of frames)
     N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
 
@@ -145,8 +80,8 @@ if __name__ == "__main__":
         if not os.path.isfile(file):
             raise RuntimeError(f'File "{file}" not found.')
 
-    if args.N_azimuths < 1:
-        raise RuntimeError(f'N_azimuths ({args.N_azimuths}) must be positive.')
+    if args.N_azimuths < 12:
+        raise RuntimeError(f'N_azimuths ({args.N_azimuths}) must be positive and at least 12.')
     if args.z_foot < 0.0:
         raise RuntimeError(f'z_foot ({args.z_foot}) must be positive.')
     if args.max_tau < 2:
@@ -158,6 +93,9 @@ if __name__ == "__main__":
 
     if not os.path.isdir(args.output):
         os.mkdir(args.output)
+
+    # Number of azimuthal directions must be a multiple of 12
+    N_azi = 12 * int(round(args.N_azimuths / 12))
 
     #----------------------------------------------------------------------------------------------
     # Helper functions
@@ -184,6 +122,16 @@ if __name__ == "__main__":
         c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec)
         radius = np.sqrt(np.sum(np.square(c_vec[0:3,0])) + c_vec[3,0])
         return (radius, c_vec[0:3,0])
+    
+    def cylinder_fit(points):
+        A_mat = np.empty((points.shape[0], 3), dtype=float)
+        A_mat[:,0:2] = 2 * points[:,0:2]
+        A_mat[:,2] = 1
+        f_vec = np.empty((points.shape[0], 1), dtype=float)
+        f_vec[:,0] = np.sum(np.square(points[:,0:2]), axis=-1)
+        c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec)
+        radius = np.sqrt(np.sum(np.square(c_vec[0:2,0])) + c_vec[2,0])
+        return (radius, c_vec[0:2,0])
 
     def plot_against_time_and_azimuth(fig, ax, data, title, var_label):
         N_x = data.shape[0]
@@ -199,6 +147,43 @@ if __name__ == "__main__":
             ax.set_xticks(list(range(N_x)))
         if N_y < 16:
             ax.set_yticks(np.linspace(0, 360, N_y, endpoint=False))
+
+    #----------------------------------------------------------------------------------------------
+    # Helper function for finding interface at droplet foot
+
+    def droplet_foot_interfaces(waters, carbons, search_directions):
+
+        # Calculate droplet CoM and floor, and flatten carbons array
+        CoM = np.mean(waters, axis=(0, 1))
+        graphene = carbons.reshape(-1, 3)
+        
+        # Iterate through search directions
+        interfaces = list()
+        normals = list()
+        for search_dir in search_directions:
+
+            # First guess of interface
+            inter = find_interface(waters, (0, 0, CoM[2]), search_dir)
+
+            # Find z-coordinate of graphene underneath first guess
+            nearby_Cs = graphene[np.sum((graphene[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
+            local_floor = np.mean(nearby_Cs[:,2])
+
+            # Second guess of interface (and repeat refinement)
+            step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
+            inter = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
+                                            local_floor + args.z_foot), search_dir)
+            nearby_Cs = graphene[np.sum((graphene[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
+            local_floor = np.mean(nearby_Cs[:,2])
+
+            # Third and final guess of interface
+            step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
+            inter, norm = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
+                                                local_floor + args.z_foot), search_dir, calc_normal=True)
+            interfaces.append(inter)
+            normals.append(norm)
+
+        return (np.array(interfaces), np.array(normals))
 
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
@@ -226,29 +211,27 @@ if __name__ == "__main__":
     time_start_1 = time.time()
     print('Computing instantaneous interfaces for every frame...')
 
-    azi = np.linspace(0, 2 * np.pi, args.N_azimuths, endpoint=False)
-    search_directions = np.c_[np.cos(azi), np.sin(azi), np.zeros_like(azi)]
+    azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
+    search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
     search_perp = np.c_[-np.sin(azi), np.cos(azi)]
 
-    contact_angles = np.empty((N_frames, args.N_azimuths), dtype=float)
-    ooplane_angles = np.empty((N_frames, args.N_azimuths), dtype=float)
+    contact_angles = np.empty((N_frames, N_azi), dtype=float)
+    ooplane_angles = np.empty((N_frames, N_azi), dtype=float)
 
     for f in range(N_frames):
 
-        interfaces, normals = find_interfaces_and_normals(waters[f:f+1], search_directions, args.z_foot)
+        interfaces, normals = droplet_foot_interfaces(waters[f:f+1], carbons[f:f+1], search_dirs)
         
         if args.local:
             for i, inter in enumerate(interfaces):
-                nearby = carbons[f, np.sum(np.square(carbons[f,:,0:2] - inter[0:2]), axis=-1) < CARBON_RADIUS_SQ]
+                nearby = carbons[f, np.sum((carbons[f,:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
                 local_norm = np.linalg.svd(nearby - np.mean(nearby, axis=0), full_matrices=False)[2][-1]
-                local_norm /= np.linalg.norm(local_norm)
-                if local_norm[2] < 0:
-                    local_norm *= -1
+                local_norm /= np.linalg.norm(local_norm) * np.sign(local_norm[2])
                 contact_angles[f, i] = np.arccos(np.dot(normals[i], local_norm)) * 180 / np.pi
         else:
             contact_angles[f] = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
 
-        proj_normals = np.power(np.sum(np.square(normals[:,0:2]), axis=-1), -0.5)[:,None] * normals[:,0:2]
+        proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
         ooplane_angles[f] = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
     
     time_start_2 = time.time()
@@ -274,14 +257,14 @@ if __name__ == "__main__":
     print('    - calculating azimuthal correlations...', end='')
     time_start_2 = time.time()
 
-    max_a = int(args.N_azimuths / 2)
+    max_a = int(N_azi / 2)
     contact_angle_azi_corrs = np.empty((max_a,), dtype=float)
     contact_angle_azi_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
     for a in range(1, max_a):
         contact_angle_azi_corrs[a] = np.mean(contact_angles[:,:-a] * contact_angles[:,a:], axis=(0,1))
     contact_angle_azi_corrs[:] /= contact_angle_azi_corrs[0]
     contact_angle_azi_popt = exp_fit(contact_angle_azi_corrs, k0=1.0, c0=0.978)
-    contact_angle_azi_popt[1] *= args.N_azimuths / 360
+    contact_angle_azi_popt[1] *= N_azi / 360.0
 
     ooplane_angle_azi_corrs = np.empty((max_a,), dtype=float)
     ooplane_angle_azi_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
@@ -290,7 +273,7 @@ if __name__ == "__main__":
     ooplane_angle_azi_corrs[:] /= ooplane_angle_azi_corrs[0]
     ooplane_angle_azi_corrs = np.abs(ooplane_angle_azi_corrs)
     ooplane_angle_azi_popt = exp_fit(ooplane_angle_azi_corrs, k0=10.0, c0=0.05)
-    ooplane_angle_azi_popt[1] *= args.N_azimuths / 360
+    ooplane_angle_azi_popt[1] *= N_azi / 360.0
 
     print(f'done in {elapsed_time(time_start_2)}.')
     print(f'Done in {elapsed_time(time_start_1)}.')
@@ -318,7 +301,7 @@ if __name__ == "__main__":
     fig = plt.figure(figsize=(14, 7), layout='constrained')
     subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
     plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), ooplane_angles,
-                                  'Instantaneous interfacial out-of-plane angles', r'$\delta$')
+                                  'Instantaneous interfacial out-of-plane angles', r'$\delta(t,\varphi)$')
     ax = subfigs[1].subplots(2, 1)
     ax[0].plot(tau, exp_curve(tau, *ooplane_angle_time_popt), 'b--')
     ax[0].plot(list(range(max_tau)), ooplane_angle_time_corrs, 'r.')
@@ -353,56 +336,41 @@ if __name__ == "__main__":
     time_start_1 = time.time()
     print('Computing time-averaged interface...')
 
-    azi = np.linspace(0, 2 * np.pi, 12, endpoint=False)
-    search_directions = np.c_[np.cos(azi), np.sin(azi), np.zeros_like(azi)]
+    azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
+    search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
     search_perp = np.c_[-np.sin(azi), np.cos(azi)]
-    interfaces, normals = find_interfaces_and_normals(waters, search_directions, args.z_foot)
+    interfaces, normals = droplet_foot_interfaces(waters, carbons, search_dirs)
     if args.local:
         flat_carbons = carbons.reshape(-1, 3)
-        local_carbons_c = np.empty((interfaces.shape[0], 3), dtype=float)
-        local_carbons_n = np.empty((interfaces.shape[0], 3), dtype=float)
-        contact_angles = np.empty((12,), dtype=float)
+        local_carbons_c = np.empty((N_azi, 3), dtype=float)
+        local_carbons_n = np.empty((N_azi, 3), dtype=float)
+        contact_angles = np.empty((N_azi,), dtype=float)
         for i, inter in enumerate(interfaces):
-            down = np.cross(np.array((search_perp[i,0], search_perp[i,1], 0.0)), normals[i])
-            foot = inter - ((inter[2] / down[2]) * down)
-            nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - foot[0:2]), axis=-1) < CARBON_RADIUS_SQ]
+            nearby = flat_carbons[np.sum((flat_carbons[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
             local_carbons_c[i] = np.mean(nearby, axis=0)
             local_carbons_n[i] = np.linalg.svd(nearby - local_carbons_c[i], full_matrices=False)[2][-1]
-            local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i])
-            if local_carbons_n[i,2] < 0:
-                local_carbons_n[i] *= -1
+            local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i]) * np.sign(local_carbons_n[i,2])
             contact_angles[i] = np.arccos(np.dot(normals[i], local_carbons_n[i])) * 180 / np.pi
     else:
         contact_angles = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
 
-    proj_normals = np.power(np.sum(np.square(normals[:,0:2]), axis=-1), -0.5)[:,None] * normals[:,0:2]
+    proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
     ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+
+    CoM = np.mean(waters, axis=(0,1))
+    cylinder_r, cylinder_c = cylinder_fit(interfaces)
 
     time_start_2 = time.time()
     print(f'    - computed time-averaged interface in {elapsed_time(time_start_1)}.')
-    print('    - finding best-fit sphere for upper surface...', end='')
-
-    phi = np.random.random(N_SPHERE_PTS) * 2 * np.pi
-    tau = np.random.random(N_SPHERE_PTS)
-    search_directions = np.c_[np.sqrt(1 - np.square(tau)) * np.cos(phi), np.sqrt(1 - np.square(tau)) * np.sin(phi), tau]
-    sphere_points = list()
-    CoM = np.mean(waters, axis=(0,1))
-    for i in range(N_SPHERE_PTS):
-        sphere_points.append(find_interface(waters, CoM, search_directions[i]))
-    sphere_points = np.array(sphere_points)
-    sphere_r, sphere_c = sphere_fit(sphere_points)
-
-    print(f'done in {elapsed_time(time_start_2)}.')
-    time_start_2 = time.time()
     print('    - plotting time-averaged density functions...', end='')
 
     fig, ax = plt.subplots(2, 3)
-    fig.set_size_inches(15, 6)
+    fig.set_size_inches(15, 5)
     interval = max(int(N_frames * N_water / 2e5), 1)
     for i in range(2):
         for j in range(3):
 
-            idx = (3 * i) + j
+            idx = ((3 * i) + j) * int(N_azi / 12)
             angle = azi[idx]
             rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
                                    (-np.sin(angle), np.cos(angle), 0.0),
@@ -412,7 +380,7 @@ if __name__ == "__main__":
             plot_density_xz_slice(rot_waters, rot_carbons, ax[i][j], show_interface=True,
                                   color_inter = (1.0, 0.0, 1.0, 0.4))
             
-            for k in (0, 6):
+            for k in (0, int(N_azi / 2)):
                 if args.local:
                     rot_carbon_c = rot_matrix @ local_carbons_c[idx + k]
                     rot_carbon_n = rot_matrix @ local_carbons_n[idx + k]
@@ -427,23 +395,15 @@ if __name__ == "__main__":
                 b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
                 ax[i][j].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
             ax[i][j].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
-            ax[i][j].text(0.01, 0.99, (r'$\theta_{left}\;=\;' + f'{contact_angles[idx + 6]:.1f}' +
+            ax[i][j].text(0.01, 0.99, (r'$\theta_{left}\;=\;' + f'{contact_angles[idx + int(N_azi / 2)]:.1f}' +
                                        r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
                                        f'{contact_angles[idx]:.1f}' + r'\degree$'), ha='left',
                                        va='top', transform=ax[i][j].transAxes)
 
-            rot_sphere_c = rot_matrix @ sphere_c
-            proj_sphere_r_sq = (sphere_r**2) - (rot_sphere_c[1]**2)
-            if proj_sphere_r_sq > 0.0:
-                a_x = np.sqrt(proj_sphere_r_sq - (max(CoM[2] - rot_sphere_c[2], 0.0)**2))
-                b_x = np.linspace(-a_x, a_x, 100)
-                ax[i][j].plot(rot_sphere_c[0] + b_x, rot_sphere_c[2] + np.sqrt(proj_sphere_r_sq - np.square(b_x)),
-                              '-.', color=(0.0, 0.5, 0.0, 0.5))
-            ax[i][j].plot((rot_sphere_c[0],), (rot_sphere_c[2],), '.', color=(0.0, 0.55, 0.0))
-
             ax[i][j].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
 
     fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
+    fig.tight_layout()
     fig.savefig(os.path.join(args.output, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
                 bbox_inches='tight', pad_inches=0.05)
     
@@ -459,9 +419,10 @@ if __name__ == "__main__":
     log_file.write(f'Mean out-of-plane angle = {np.mean(ooplane_angles)} [deg]\n')
     log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
     log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
+    log_file.write(f'Center-of-mass x-, y-coordinates = {CoM[0:2]} [A]\n')
     log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
-    log_file.write(f'Best-fit spherical center z-height = {sphere_c[2]} [A]\n')
-    log_file.write(f'Best-fit spherical radius = {sphere_r} [A]\n\n')
+    log_file.write(f'Best-fit edge circle center (x, y) = {cylinder_c} [A]\n')
+    log_file.write(f'Best-fit edge circle radius = {cylinder_r} [A]\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
