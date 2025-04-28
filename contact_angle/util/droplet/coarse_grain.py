@@ -7,7 +7,7 @@ import numpy as np
 COARSE_GRAIN_LENGTH = 2.4    # Coarse-graining lengthscale (in angstroms)
 CUTOFF_DENSITY = 0.016       # Cutoff density for interface (in angstroms**(-3))
 BULK_DENSITY = 0.033368      # Bulk density for liquid (in angstroms**(-3))
-SLICING_CUTOFF = 2           # Cutoff distance for slicing (in multiples of COARSE_GRAIN_LENGTH)
+SLICING_CUTOFF = 3.5         # Cutoff distance for slicing (in multiples of COARSE_GRAIN_LENGTH)
 DEFAULT_TOLERANCE = 0.01     # Accuracy tolerance for interface search (in angstroms)
 
 MAX_SIZE = 1e7               # Maximum size of numpy broadcasting operation (in size(float)s) for
