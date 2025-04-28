@@ -363,7 +363,9 @@ if __name__ == "__main__":
         local_carbons_n = np.empty((interfaces.shape[0], 3), dtype=float)
         contact_angles = np.empty((12,), dtype=float)
         for i, inter in enumerate(interfaces):
-            nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - inter[0:2]), axis=-1) < CARBON_RADIUS_SQ]
+            down = np.cross(np.array((search_perp[i,0], search_perp[i,1], 0.0)), normals[i])
+            foot = inter - ((inter[2] / down[2]) * down)
+            nearby = flat_carbons[np.sum(np.square(flat_carbons[:,0:2] - foot[0:2]), axis=-1) < CARBON_RADIUS_SQ]
             local_carbons_c[i] = np.mean(nearby, axis=0)
             local_carbons_n[i] = np.linalg.svd(nearby - local_carbons_c[i], full_matrices=False)[2][-1]
             local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i])
@@ -408,7 +410,7 @@ if __name__ == "__main__":
             rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
             rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
             plot_density_xz_slice(rot_waters, rot_carbons, ax[i][j], show_interface=True,
-                                  color_inter = (1.0, 0.0, 1.0, 0.5))
+                                  color_inter = (1.0, 0.0, 1.0, 0.4))
             
             for k in (0, 6):
                 if args.local:
@@ -425,15 +427,19 @@ if __name__ == "__main__":
                 b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
                 ax[i][j].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
             ax[i][j].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
+            ax[i][j].text(0.01, 0.99, (r'$\theta_{left}\;=\;' + f'{contact_angles[idx + 6]:.1f}' +
+                                       r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
+                                       f'{contact_angles[idx]:.1f}' + r'\degree$'), ha='left',
+                                       va='top', transform=ax[i][j].transAxes)
 
             rot_sphere_c = rot_matrix @ sphere_c
             proj_sphere_r_sq = (sphere_r**2) - (rot_sphere_c[1]**2)
             if proj_sphere_r_sq > 0.0:
-                a_x = 0.5 * np.sqrt(proj_sphere_r_sq)
+                a_x = np.sqrt(proj_sphere_r_sq - (max(CoM[2] - rot_sphere_c[2], 0.0)**2))
                 b_x = np.linspace(-a_x, a_x, 100)
                 ax[i][j].plot(rot_sphere_c[0] + b_x, rot_sphere_c[2] + np.sqrt(proj_sphere_r_sq - np.square(b_x)),
                               '-.', color=(0.0, 0.5, 0.0, 0.5))
-            ax[i][j].plot((rot_sphere_c[0],), (rot_sphere_c[2],), '.', color=(0.0, 0.5, 0.0))
+            ax[i][j].plot((rot_sphere_c[0],), (rot_sphere_c[2],), '.', color=(0.0, 0.55, 0.0))
 
             ax[i][j].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
 
