@@ -28,7 +28,7 @@ from scipy.optimize import curve_fit
 from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.graphene import smooth_sheet, calc_inclination_angles
 
-if __name__ == "__main__":
+def main() -> None:
 
     #----------------------------------------------------------------------------------------------
     # Generate program description and parse input arguments
@@ -111,21 +111,23 @@ if __name__ == "__main__":
     # Calculate normalized infinite-time autocorrelations of local inclination angles
 
     time_start = time.time()
-    autocorr = np.zeros((args.max_tau, args.N_x, args.N_y), dtype=float)
+    max_tau = min(args.max_tau, carbons.shape[0] - 1)
+    autocorr = np.zeros((max_tau, args.N_x, args.N_y), dtype=float)
     autocorr[0] = np.mean(np.square(angles), axis=0)
-    for tau in range(1, args.max_tau):
+    for tau in range(1, max_tau):
         autocorr[tau] = np.mean(angles[:-tau] * angles[tau:], axis=0)
     autocorr[:] /= autocorr[0]
 
-    def exp_curve(x, A, k, c):
-        return A * np.exp(-k * x) + c
+    def exp_curve(x, k, c):
+        return (1 - c) * np.exp(-k * x) + c
 
-    tau = np.array(range(args.max_tau))
+    tau = np.array(range(max_tau))
     inf_autoc = np.zeros((args.N_x, args.N_y), dtype=float)
     for i in range(args.N_x):
         for j in range(args.N_y):
             try:
-                popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.2, 0.5, 0.8))
+                popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.5, 0.8),
+                                    bounds=((0.0, 0.0), (np.inf, 1.0)))
                 inf_autoc[i,j] = max(popt[-1], 0.0)
             except RuntimeError:
                 inf_autoc[i,j] = 0.0
@@ -211,3 +213,9 @@ if __name__ == "__main__":
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
     if args.opt_display:
         plt.show()
+
+#==================================================================================================
+# Run from src
+
+if __name__ == "__main__":
+    main()

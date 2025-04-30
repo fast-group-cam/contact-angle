@@ -23,7 +23,7 @@ import matplotlib.animation as anim
 from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet.plot import plot_density_xz_slice, update_density_xz_slice
 
-if __name__ == "__main__":
+def main() -> None:
 
     #----------------------------------------------------------------------------------------------
     # Script constants
@@ -155,3 +155,8 @@ if __name__ == "__main__":
     print(f'...done in {elapsed_time(time_start_1)}.')
     print(f'Program completed in {elapsed_time(time_start_0)}.')
 
+#==================================================================================================
+# Run from src
+
+if __name__ == "__main__":
+    main()

@@ -30,7 +30,7 @@ from contact_angle.util import elapsed_time, read_droplet_trajectory
 from contact_angle.util.droplet import find_interface
 from contact_angle.util.droplet.plot import plot_density_xz_slice
 
-if __name__ == "__main__":
+def main() -> None:
 
     #----------------------------------------------------------------------------------------------
     # Script default parameters
@@ -436,3 +436,9 @@ if __name__ == "__main__":
     print(f'Program completed in {elapsed_time(time_start_0)}.')
     log_file.close()
     sys.exit()
+
+#==================================================================================================
+# Run from src
+
+if __name__ == "__main__":
+    main()

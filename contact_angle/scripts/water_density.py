@@ -22,7 +22,7 @@ from contact_angle.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_D
                                                      find_interface)
 from contact_angle.util.droplet.plot import plot_density_xz_slice
 
-if __name__ == "__main__":
+def main() -> None:
 
     #----------------------------------------------------------------------------------------------
     # Generate program description and parse input arguments
@@ -196,3 +196,9 @@ if __name__ == "__main__":
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
     if args.opt_display:
         plt.show()
+
+#==================================================================================================
+# Run from src
+
+if __name__ == "__main__":
+    main()
