@@ -24,7 +24,7 @@ def elapsed_time(time_start: float) -> str:
 #==================================================================================================
 
 def best_fit_sphere(points: np.ndarray, d: int = None) -> tuple[float, np.ndarray]:
-    """This function calculates the best-fit (d-1)-dimensional sphere, i.e. the surface defined by
+    """Calculates the best-fit (d-1)-dimensional sphere, i.e. the surface defined by
     :math:`|r - c| = a`, for a set of d-dimensional points. The sphere is fitted by minimizing the
     squares of the points' squared distances from the centre minus the squared radius, i.e. the sum
     of :math:`(|r_i - c|^2 - a^2)^2`.

@@ -19,21 +19,61 @@ def plot_density_xz_slice(
         color_carbon: tuple[float, ...] | str = (0.6, 0.6, 0.6),
         color_inter: tuple[float, ...] | str = (1.0, 0.0, 1.0)
         ) -> tuple[Artist, ...]:
-    """Plots the coarse-grained density distribution, taken along the xz slice (assuming the
-droplet has been centered). The inputs are:
+    """Plots the coarse-grained density distribution, taken along the xz plane (assuming the
+    droplet has been centered).
 
-    - `waters`: The Cartesian coordinates of the water molecules.
-    - `carbons`: The Cartesian coordinates of the carbon atoms.
-    - `axis`: The MatPlotLib Axes object to render to.
-    - `n_plot_bins`: The number of plotting bins to divide each direction of space up into.
-    - `show_interface`: Whether to display the Willard-Chandler interface.
+    Parameters
+    ----------
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
+        single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
+        in which case the density distribution is averaged over the frames.
+    carbons : ndarray
+        The Cartesian coordinates of the carbon atoms, either with shape (N_carbon, 3) for a
+        single instantaneous frame; or shape (N_frames, N_carbon, 3) for a collection of frames.
+        Note that the number of dimensions must match with `waters`.
+    axis : Axes
+        The MatPlotLib Axes object to plot onto.
+    n_plot_bins : int, optional
+        The number of cells to divide the image into for calculating the density distribution; a
+        larger number yields higher resolution. Defaults to 80.
+    show_interface : bool, optional
+        Whether to display the Willard-Chandler interface. Defaults to False.
+    
+    Returns
+    -------
+    artists : tuple[Artist, ...]
+        A tuple of Artists involved with the plot, which can be used by `update_density_xz_slice`
+        to update the plot.
 
-All other keyworded arguments either affect the colours used on the plot (N.B. the density
-distribution itself will always be shown in blue -- this cannot be changed), or are derived from
-the `coarse_grain` module and thus affect the calculation of the density function.
-
-This function returns the tuple of Artists involved with the plot, which can be used by
-`update_density_xz_slice` to update the plot."""
+    Other Parameters
+    ----------------
+    show_carbon_dist : bool, optional
+        If a single instantaneous frame is provided and `show_carbon_dist` is False, the carbon
+        atoms in the slice (see `slicing_cutoff` below) will be individually rendered as points;
+        otherwise, if `show_carbon_dist` is True, or a collection of frames is provided (regardless
+        of whether `show_carbon_dist` is True or not), the carbon atoms in the slice will be
+        collated and displayed as a distribution of z-coordinates along the x-axis, binned over
+        `n_plot_bins` intervals.
+    coarse_grain_length : float, optional
+        This parameter is passed to `coarse_grained_density`.
+    cutoff_density : float, optional
+        This parameter is passed to `coarse_grained_density`.
+    bulk_density: float, optional
+        The expected value of the coarse-grained density distribution for bulk liquid. This
+        determines the color scale of the plot; specifically, the color map used maps densities
+        below `bulk_density` to a blue color #0000FF with alpha (opacity) equal to the relative
+        ratio, and densities between one to two times of `bulk_density` to a linear interpolation
+        between red #FF0000 and blue #0000FF with alpha 1.
+    slicing_cutoff : float, optional
+        This parameter is passed on `find_interface`. Furthermore, only water molecules and carbon
+        atoms within `slicing_cutoff` * `coarse_grain_length` of the y = 0 plane are considered to
+        be part of the xz 'slice', and contribute to the plot.
+    color_carbon : color, optional
+        The color to plot the carbon atoms with.
+    color_inter : color, optional
+        The color to plot the Willard-Chandler interface with, if `show_interface` is turned on.
+    """
 
     # Check shapes of waters and carbons
     if (len(waters.shape) == 2 and len(carbons.shape) == 2 and waters.shape[-1] == 3 and

@@ -8,18 +8,27 @@ def calc_fourier_coefficients(
         cell_xy: np.ndarray | tuple[float, float],
         N_points: tuple[int, int] | int = 80
         ) -> tuple[np.ndarray, np.ndarray]:
-    """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
-calculates the Fourier coefficients. The inputs are:
+    """Calculates the Fourier coefficients for a smoothened graphene sheet.
 
-    - `carbons`: The Cartesian coordinates of the carbon atoms at a single given instant, with
-    shape (N_carbon, 3).
-    - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-    - `N_points`: The number of coefficients to calculate in k-space, either specified as a tuple
-    of integers (N_x, N_y), or given as a single integer N_x = N_y.
-
-The output is a tuple of two np.NDArrays: the first of shape (N_x, N_y, 2), representing the two-
-dimensional reciprocal space points which the coefficients were calculated at, and the second of
-shape (N_x, N_y) containing the complex Fourier coefficients."""
+    Parameters
+    ----------
+    carbons : ndarray
+        The Cartesian coordinates of the carbon atoms at a single given instant, with shape
+        (N_carbon, 3).
+    cell_xy : array_like
+        The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
+    N : tuple[int, int] or int, optional
+        The number of grid points, either specified as a tuple of integers (N_x, N_y), or given as
+        a single integer N_x = N_y. Defaults to (80, 80).
+    
+    Returns
+    -------
+    k_points : ndarray
+        The two-dimensional reciprocal space points which the Fourier coefficients were calculated
+        at, with shape (N_x, N_y, 2).
+    coeffs : ndarray
+        The complex Fourier coefficients, with shape (N_x, N_y).
+    """
 
     N_x, N_y = cast_to_gridsize(N_points)
     sheet = smooth_sheet(carbons, cell_xy, N_points)
@@ -39,17 +48,28 @@ def calc_power_spectrum(
         cell_xy: np.ndarray | tuple[float, float],
         N_points: tuple[int, int] | int = 80
         ) -> tuple[np.ndarray, np.ndarray]:
-    """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
-calculates the power spectrum P(k) in terms of the scalar magnitude of k. The inputs are:
+    """Calculates the power spectrum P(k) in terms of the scalar magnitude of k for a smoothened
+    graphene sheet.
 
-    - `carbons`: The Cartesian coordinates of the carbon atoms at a single given instant, with
-    shape (N_carbon, 3).
-    - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-    - `N_points`: The number of coefficients to calculate in k-space, either specified as a tuple
-    of integers (N_x, N_y), or given as a single integer N_x = N_y.
-
-The output is a tuple of two np.NDArrays: the first of shape (N_x * N_y,), representing the scalar
-magnitude k, and the second of shape (N_x * N_y,) containing the real power spectrum."""
+    Parameters
+    ----------
+    carbons : ndarray
+        The Cartesian coordinates of the carbon atoms at a single given instant, with shape
+        (N_carbon, 3).
+    cell_xy : array_like
+        The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
+    N : tuple[int, int] or int, optional
+        The number of grid points, either specified as a tuple of integers (N_x, N_y), or given as
+        a single integer N_x = N_y. Defaults to (80, 80).
+    
+    Returns
+    -------
+    k : ndarray
+        The scalar magnitudes of the reciprocal space k-vectors which the spectrum was calculated
+        at, with shape (N_x * N_y,).
+    power : ndarray
+        The real power spectrum, with shape (N_x * N_y,).
+    """
     
     k_points, coeffs = calc_fourier_coefficients(carbons, cell_xy, N_points)
     power = (np.conj(coeffs) * coeffs).real.astype(float).flatten()

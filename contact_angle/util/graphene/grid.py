@@ -10,6 +10,8 @@ from .sheet import C_C_DISTANCE
 #==================================================================================================
 
 def castable_to_int(x):
+    """Checks if the input can be safely casted to an integer.
+    """
     try:
         int(x)
         return True
@@ -19,6 +21,9 @@ def castable_to_int(x):
 #==================================================================================================
 
 def cast_to_gridsize(N):
+    """Interprets a 2D size specification (N_x, N_y) either as a tuple of integers, or a single
+    integer N_x = N_y.
+    """
     return ((N, N) if castable_to_int(N) else N[0:2])
 
 #==================================================================================================
@@ -27,17 +32,31 @@ def generate_grid(
         N: tuple[int, int] | int,
         cell_xy: np.ndarray | tuple[float, float]
     ) -> np.ndarray:
-    """This function generates a 2D grid of points, and returns their x and y coordinates in a
-np.NDArray of shape (N_x, N_y, 2). The points span the first periodic unit cell, centred on the
-origin; hence, the x-coordinates run in ascending order within the interval (-cell_x/2, cell_x/2),
-and the y-coordinates run in ascending order within the interval (-cell_y/2, cell_y/2). The
-coordinates are symmetric, i.e. the represent the centres of rectangles of width cell_x/N_x and
-height cell_y/N_y.
-
-The size N may either be a tuple (N_x, N_y), or a single integer N_x = N_y = N.
-
-Note that this ordering of axes contradicts MatPlotLib's imshow axes, so np.swapaxes(..., 0, 1)
-should be used when generating plots via imshow etc.."""
+    """Generates a 2D grid of points.
+    
+    Parameters
+    ----------
+    N : tuple[int, int] or int
+        The number of grid points, either specified as a tuple of integers (N_x, N_y), or given as
+        a single integer N_x = N_y.
+    cell_xy : array_like
+        The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
+    
+    Returns
+    -------
+    grid : ndarray
+        The x and y coordinates of the grid point, with shape (N_x, N_y, 2). The points span the
+        first periodic unit cell, centred on the origin; hence the x-coordinates run within the
+        interval -cell_x/2 to cell_x/2, and the y-coordinates run within the interval -cell_y/2 to
+        cell_y/2. The grid points are symmetric about the origin, i.e. they represents the centers
+        (not the corners) of the rectangles of width cell_x/N_x and height cell_y/N_y tiling the
+        plane.
+    
+    Notes
+    -----
+    The ordering of axes (N_x, N_y) contradicts the order of MatPlotLib's `imshow` axes, so
+    `np.swapaxes(..., 0, 1)` should be used when generating plots etc..
+    """
 
     N_x, N_y = cast_to_gridsize(N)
     x_coords = np.linspace(-0.5 * cell_xy[0], 0.5 * cell_xy[0], N_x) + (0.5 * cell_xy[0]/N_x)
@@ -52,18 +71,33 @@ def smooth_sheet(
         N: tuple[int, int] | int = 80, *,
         margin: float = (3 * C_C_DISTANCE)
         ) -> np.ndarray:
-    """This function takes in the coordinates of the carbon atoms of a graphene sheet, and
-calculates a 'smooth' sheet using the Clough-Tocher interpolator on the standard grid given by
-`generate_grid`. The inputs are:
+    """Calculates a 'smooth' sheet from the coordinates of the carbon atoms of a graphene sheet,
+    using the Clough-Tocher interpolator on the standard grid given by `generate_grid`.
 
-    - `carbons`: The Cartesian coordinates of the carbon atoms at a single given instant, with
-    shape (N_carbon, 3).
-    - `cell_xy`: The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
-    - `N`: The size of the grid, either specified as a tuple of integers (N_x, N_y), or given as a
-    single integer N_x = N_y.
+    Parameters
+    ----------
+    carbons : ndarray
+        The Cartesian coordinates of the carbon atoms at a single given instant, with shape
+        (N_carbon, 3).
+    cell_xy : array_like
+        The cell parameters along the x- and y-axes, expressed as [cell_x, cell_y].
+    N : tuple[int, int] or int, optional
+        The number of grid points, either specified as a tuple of integers (N_x, N_y), or given as
+        a single integer N_x = N_y. Defaults to (80, 80).
+    margin : float, optional
+        To preserve the periodic boundary conditions, a copy of the carbon atoms within `margin`
+        angstroms of each boundary is tiled across the opposite boundary, before performing the
+        Clough-Tocher interpolation. Thus, `margin` should be large enough to capture at least one
+        graphene lattice unit per boundary, ensuring that the convex hull of the tiled carbon atoms
+        fully encapsulates all grid points; however increasingly `margin` excessively leads to
+        performance costs from the Clough-Tocher interpolator. Defaults to 4.278.
 
-The output is a np.NDArray of shape (N_x, N_y), representing the smooth surface z(x, y) evaluated
-at the gridpoints given by `generate_grid`."""
+    Returns
+    -------
+    z : ndarray
+        The smooth surface z(x, y) evaluated at the grid points given by `generate_grid`, with
+        shape (N_x, N_y).
+    """
     
     cell_xy = np.array(cell_xy[0:2], dtype=float)
     cell_params = np.array((cell_xy[0], cell_xy[1], 0), dtype=float)

@@ -16,24 +16,35 @@ def generate_sheet(
         atomic_symbol: str = 'C',
         origin: Literal['corner', 'center'] = 'center'
         ) -> ase.Atoms:
-    """This function generates a graphene sheet. The inputs are:
+    """Generates a graphene sheet.
 
-    - `max_cell_x`: The maximum dimension of cell_x in angstroms.
-    - `max_cell_y`: The maximum dimension of cell_y in angstroms, if specified; otherwise taken to
-    be equal to max_cell_x.
-    - `interatomic_dist`: The interatomic distance to generate the sheet with.
-    - `atomic_symbol`: The symbol of the atom used to generate the sheet.
-    - `origin`: If set to 'corner', the sheet will be generated within the x-coordinate range of 0
-    to cell_x, and y-coordinate range of 0 to cell_y; if set to 'center', the sheet will be
-    generated within the x-coordinate range of -0.5 * cell_x to 0.5 * cell_x, and y-coordinate
-    range of -0.5 * cell_y to 0.5 * cell_y. In either setting, the sheet will be aligned such that
-    one atom is placed at (0, 0, 0).
+    Parameters
+    ----------
+    max_cell_x : float
+        The maximum dimension of cell_x in angstroms.
+    max_cell_y : float, optional
+        The maximum dimension of cell_y in angstroms, if specified; otherwise taken to be equal to
+        `max_cell_x`.
+    interatomic_dist : float, optional
+        The interatomic distance to generate the sheet with, in angstroms. Defaults to 1.426.
+    atomic_symbol : str, optional
+        The symbol of the atom used to generate the sheet. Defaults to 'C'.
+    origin : {'corner', 'center'}
+        If set to 'corner', the sheet will be generated within the x-coordinate range of 0 to
+        cell_x, and y-coordinate range of 0 to cell_y; if set to 'center', the sheet will be
+        generated within the x-coordinate range of -0.5 * cell_x to 0.5 * cell_x, and y-coordinate
+        range of -0.5 * cell_y to 0.5 * cell_y. In either setting, the sheet will be aligned such
+        that one atom is placed at (0, 0, 0). Defaults to 'center'.
 
-The output is an ASE Atoms object, initialized with only information about chemical species and
-position. The cell parameters [cell_x, cell_y, cell_z] are set such that cell_x and cell_y are the
-largest possible integer multiples of the hexagonal grid (so that the sheet is correctly periodic)
-that are lesser than or equal to max_cell_x and max_cell_y respectively, while cell_z is set to the
-geometric mean of cell_x and cell_y."""
+    Returns
+    -------
+    atoms : ase.Atoms
+        The graphene sheet, initialized with only information about chemical species and position.
+        The cell parameters [cell_x, cell_y, cell_z] are set such that cell_x and cell_y are the
+        largest possible integer multiples of the hexagonal grid (so that the sheet is correctly
+        periodic) that are lesser than or equal to `max_cell_x` and `max_cell_y` respectively,
+        while cell_z is set to the geometric mean of cell_x and cell_y.
+    """
     
     max_cell_x = float(max_cell_x)
     if max_cell_y is None:

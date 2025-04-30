@@ -11,17 +11,29 @@ def center_coordinates(
         atoms: ase.Atoms,
         cell_params: np.ndarray
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """This function takes in a single frame of the trajectory, and shifts the coordinates so that
-the centre-of-mass of the droplet is on the z-axis (at x = y = 0) with the graphene plane at z = 0;
-it then returns the coordinates of the water molecules and carbon atoms. The inputs are:
+    """Takes in a single frame of a trajectory of a droplet of water on graphene, and shifts the
+    coordinates so that the centre-of-mass of the droplet is on the z-axis (at x = y = 0) with the
+    graphene plane at z = 0.
 
-    - `atoms`: The frame to be analyzed; should only contain carbon, hydrogen, and oxygen atoms.
-    - `cell_params`: The cell parameters, expressed as [cell_x, cell_y, cell_z].
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        The frame to be analyzed; should only contain carbon, hydrogen, and oxygen atoms. It is
+        permissible for `atoms` to contain no water molecules, but it must contain at least one
+        carbon atom, and must contain exactly twice as many hydrogen atoms as oxygen atoms.
+    cell_params : array_like
+        The cell parameters, expressed as [cell_x, cell_y, cell_z].
 
-The output is a tuple of three np.NDArrays, the first array having shape (N_water, 3) for the 
-Cartesian coordinates of the water molecules (taken as just oxygen atoms), the second array having
-shape (N_carbon, 3) for the Cartesian coordinates of the carbon atoms, and the third array having
-shape (2 * N_water, 3) for the Cartesian coordinates of the hydrogen atoms."""
+    Returns
+    -------
+    waters : ndarray
+        The Cartesian coordinates of the water molecules (taken as just the oxygen atoms), with
+        shape (N_water, 3).
+    carbons : ndarray
+        The Cartesian coordinates of the carbon atoms, with shape (N_carbon, 3).
+    hydrogens : ndarray
+        The Cartesian coordinates of the hydrogen atoms, with shape (2 * N_water, 3).
+    """
 
     # Split according to atom type
     carbons = atoms.positions[atoms.symbols=='C']
@@ -92,19 +104,41 @@ def read_droplet_trajectory(
         filename: str | PurePath | IO | Iterable,
         **kwargs
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """This function reads a file (or multiple files) containing a trajectory of a water droplet on
-graphene, and parses it (including centering the coordinates via `center_coordinates`). The input
-arguments are passed directly to `ase.io.iread`.
+    """Reads a file (or list of files) containing a NVT trajectory of a water droplet on graphene,
+    and parses it automatically (including centering the coordinates via `center_coordinates`).
 
-Importantly, the file must either have parseable atomic species, or have atomic species specified
-by an internal index (e.g. in the style of LAMMPS) which maps according to {1: carbon, 2: hydrogen,
-3: oxygen}; and the file must contain at least one atom of each type.
+    Parameters
+    ----------
+    filename : file, str, list of files, or of str
+        The trajectory file, or list of trajectory files, to read from.
+    **kwargs
+        Extra arguments are passed directly to `ase.io.iread`.
 
-The output is a tuple of four np.NDArrays: the first array has shape (3,) and gives the system cell
-parameters; the second array has shape (N_frames, N_water, 3) for the time-evolution of the
-Cartesian coordinates of the water molecules (taken as just oxygen atoms); the third array has
-shape (N_frames, N_carbon, 3) for the carbon atoms; and the fourth array has shape (N_frames,
-2 * N_water, 3) for the hydrogen atoms."""
+    Returns
+    -------
+    cell_params : ndarray
+        The system cell parameters, with shape (3,).
+    waters : ndarray
+        The time-evolution of the Cartesian coordinates of the water molecules (taken as just the
+        oxygen atoms), with shape (N_frames, N_water, 3).
+    carbons : ndarray
+        The time-evolution of the Cartesian coordinates of the carbon atoms, with shape (N_frames,
+        N_carbon, 3).
+    hydrogen : ndarray
+        The time-evolution of the Cartesian coordinates of the hydrogen atoms, with shape
+        (N_frames, 2 * N_carbon, 3).
+
+    Notes
+    -----
+    The file(s) must either have parseable atomic species, such that `ase.io.read` correctly gives
+    the atomic species back; or have atomic species specified by an internal index (e.g. in the
+    LAMMPS style) which maps according to {1: 'C', 2: 'H', 3: 'O'}. In either case, the file must
+    contain at least one carbon atom, and exactly twice as many hydrogen atoms as oxygen atoms
+    (which may be zero).
+
+    It is also assumed that the trajectory is fixed-volume with orthorhombic cell parameters, and
+    fully periodic boundary conditions.
+    """
 
     if type(filename) == str:
         filenames = (filename,)

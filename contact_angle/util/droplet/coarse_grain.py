@@ -21,19 +21,30 @@ def coarse_grained_density(
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         max_size: int = MAX_SIZE
         ) -> float | np.ndarray:
-    """This function calculates the coarse-grained density distribution, given the coordinates of
-the water molecules, at either one test point or a list of test points. The inputs are:
+    """Calculates the coarse-grained density distribution, given the water molecules' coordinates,
+    at either one test point or a list of test points.
 
-    - `pos`: Either the test point to calculate the density function at, with shape (3,); or the
-    sequence of test points to calculate the density function at, with shape (N_pos, 3).
-    - `waters`: The Cartesian coordinates of the water molecules, either with shape (N_water, 3)
-    for a single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
-    in which case the density distribution is averaged over the frames.
-    - `coarse_grain_length`: The coarse-graining lengthscale in angstroms.
+    Parameters
+    ----------
+    pos : ndarray
+        Either the test point to calculate the density function at, with shape (3,); or the
+        sequence of test points to calculate the density function at, with shape (N_pos, 3).
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
+        single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
+        in which case the density distribution is averaged over the frames.
+    coarse_grain_length : float, optional
+        The coarse-graining lengthscale in angstroms. Defaults to 2.4.
+    max_size: int, optional
+        The maximum size (i.e. number of floats) that broadcasting operations are allowed to create
+        during the calculation, to prevent running out of memory. Defaults to 1e7.
 
-If pos has shape (3,), then the output is a float representing the density at pos; and if it has
-shape (N_pos, 3), then the output is a np.NDArray of shape (N_pos,) representing the densities at
-each position."""
+    Returns
+    -------
+    density : ndarray
+        An array of shape (N_pos,), representing the densities at each position. A scalar is
+        returned if only one position is supplied.
+    """
 
     if len(waters.shape) == 2 and waters.shape[-1] == 3:
         N_frames = 1
@@ -94,13 +105,30 @@ def coarse_grained_density_grad(
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         max_size: int = MAX_SIZE
         ) -> float | np.ndarray:
-    """This function calculates the gradient of the coarse-grained density distribution, given the
-coordinates of the water molecules, at either one test point or a list of test points. See
-`coarse_grained_density` for the list of inputs.
+    """Calculates the gradient of the coarse-grained density distribution, given the water
+    molecules' coordinates, at either one test point or a list of test points.
 
-If pos has shape (3,), then the output is a np.NDArray of shape (3,) representing the density
-gradient at pos; and if it has shape (N_pos, 3), then the output is a np.NDArray of shape
-(N_pos, 3) representing the density gradients at each position."""
+    Parameters
+    ----------
+    pos : ndarray
+        Either the test point to calculate the density function at, with shape (3,); or the
+        sequence of test points to calculate the density function at, with shape (N_pos, 3).
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
+        single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
+        in which case the density distribution is averaged over the frames.
+    coarse_grain_length : float, optional
+        The coarse-graining lengthscale in angstroms. Defaults to 2.4.
+    max_size: int, optional
+        The maximum size (i.e. number of floats) that broadcasting operations are allowed to create
+        during the calculation, to prevent running out of memory. Defaults to 1e7.
+
+    Returns
+    -------
+    density_gradient : ndarray
+        An array of shape (N_pos, 3), representing the density gradients at each position. An array
+        of shape (3,) is returned if only one position is supplied.
+    """
 
     if len(waters.shape) == 2 and waters.shape[-1] == 3:
         N_frames = 1
@@ -171,45 +199,93 @@ def find_interface(
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         cutoff_density: float = CUTOFF_DENSITY,
         slicing_cutoff: float = SLICING_CUTOFF,
-        reverse_search = False
+        reverse_search: bool = False
         ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """This function takes in the coordinates of water molecules, and finds the Willard-Chandler
-instantaneous interface along a given search axis. The search axis should be a ray starting from
-within the bulk liquid region, pointing 'outwards' towards the exterior region in some direction.
-The inputs are:
+    """Finds the Willard-Chandler interface, defined as the isosurface of the coarse-grained
+    density distribution at the cutoff density, given the water molecules' coordinates and a
+    specified search ray.
 
-    - `waters`: The Cartesian coordinates of the water molecules, either with shape (N_water, 3)
-    for a single instantaneous frame; or shape (N_frames, N_water, 3) for multiple frames, which
-    will be collated together.
-    - `search_start`: The coordinates to begin searching from, with shape (3,); the search axis is
-    a ray extending from this point. Ideally this point should be within the bulk liquid region,
-    unless reverse_search is turned on.
-    - `axis`: The direction of the search axis to scan along.
-    - `tol`: The distance tolerance for the position of the intersection along the search axis.
-    - `max_dist`: The maximum distance along the search axis to scan; set to None to search
-    unlimited distances. Do not set to np.inf under any circumstance!
-    - `calc_normal`: Whether the output should include the interface normal or not.
-    - `coarse_grain_length`: The coarse-graining lengthscale in angstroms.
-    - `cutoff_density`: The cutoff number density parameter for defining the interface; usually
-    should be set to half of the bulk number density.
-    - `slicing_cutoff`: The cutoff distance for slicing the subset of water molecules relevant to
-    the search axis (to reduce computational costs of calculating the density function), as
-    expressed in multiples of coarse_grain_length; making this parameter smaller speeds up the
-    calculation but may introduce inaccuracy. Set to None or np.inf to prevent this slicing.
-    - `reverse_search`: Without reverse_search, it is assumed that the search axis starts from
-    within the bulk liquid region, hence the interface is the first point where the density falls
-    to the value of cutoff_density; turning on reverse_search reverses this behaviour, so that the
-    interface is instead the first point where the density rises to the value of cutoff_density.
+    Parameters
+    ----------
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
+        single instantaneous frame, in which case the found interface represents an instantaneous
+        interface; or shape (N_frames, N_water, 3) for a collection of frames, in which case the
+        found interface represents the time-averaged interface.
+    search_start: array_like, optional
+        The coordinates of the starting point to begin searching from, with shape (3,); the search
+        ray extends from this point. This point should be within the bulk liquid region, unless
+        `reverse_search` is turned on in which case this point should be outside the bulk liquid
+        region. Defaults to the origin.
+    axis : array_like, optional
+        The direction of the search ray to scan along, with shape (3,). Defaults to the z-axis.
+    tol : float, optional
+        The precision tolerance for the position of the interface intersection along the search
+        ray, in angstroms. Defaults to 0.01.
+    max_dist : float, optional
+        The maximum distance along the search ray to scan, in angstroms; it is important that this
+        maximal endpoint (i.e. `search_start` + `max_dist` * `axis`) is outside the bulk liquid
+        region if `reverse_search` is turned off / inside the bulk liquid region if
+        `reverse_search` is turned on. Setting `max_dist` to None, which is default, allows
+        searching unlimited distances. **Warning**: do not set to infinity!
+    calc_normal: bool, optional
+        Whether the output should include the interface normal or not; defaults to False.
+    
+    Returns
+    -------
+    inter : ndarray
+        The location of the intersection between the Willard-Chandler interface and the search ray,
+        with shape (3,).
+    norm: ndarray, only if `calc_normal` is True
+        The surface normal of the Willard-Chandler interface at the found intersection, oriented
+        to point *out* of the liquid region, with shape (3,).
 
-If calc_normal is not enabled (default), the output is a np.NDArray of shape (3,) representing the
-position of the intersection between the Willard-Chandler interface and the search axis. A
-RuntimeWarning will be issued if the intersection cannot be found, in which case the output will
-default to search_start.
+    Other Parameters
+    ----------------
+    coarse_grain_length : float, optional
+        The coarse-graining lengthscale in angstroms. Defaults to 2.4.
+    cutoff_density : float, optional
+        The cutoff density defining the interface, i.e. the isosurface where the coarse-grained
+        density distribution is equal to this cutoff density, in angstrom^-3. Defaults to 0.016.
+    slicing_cutoff : float, optional
+        The cutoff distance for slicing the subset of water molecules relevant to the search ray,
+        in multiples of `coarse_grain_length`; see notes below. Set to None or np.inf to disable
+        this slicing. Defaults to 3.5.
+    reverse_search : bool, optional
+        The default behavior is that the search ray starts from within the bulk liquid region and
+        exits it somewhere, hence the interface is found by searching for the point where the
+        density *falls* to the cutoff density; turning on `reverse_search` reverses this behavior,
+        so that the search ray starts from outside the bulk liquid region and enters it somewhere,
+        and the interface is found by searching for the point where the density *rises* to the
+        cutoff density instead.
+        
+    Warns
+    -----
+    RuntimeWarning
+        If there are no water molecules within the sliced subset, or if the bulk liquid region or
+        exterior region could not be identified along the search ray; in which case the fallback
+        return value of `inter` is `search_start`, and `norm` is `axis`.
 
-If calc_normal is enabled, the output is a tuple of two np.NDArrays both of shape (3,), which
-represent the position and normal vector of the interface respectively. As before, a RuntimeWarning
-will be issued if the intersection cannot be found, in which case the output will default to
-(search_start, axis)."""
+    Notes
+    -----
+    The interface is found by performing a binary search along the search axis to find the point at
+    which the coarse-grained density function is equal to the cutoff density; it is therefore
+    important that `search_start` and `max_dist` are chosen so that the search ray begins within
+    the bulk liquid region, and ends outside the bulk liquid region (leaving `max_dist` as None
+    guarantees this), or vice versa in the case of `reverse_search`.
+
+    The behavior of this binary search is ill-defined, and may be sensitive to small changes in
+    `search_start` or `max_dist`, if the search ray crosses multiple interfaces (e.g. in the case
+    of a void within the liquid).
+
+    To reduce the computational costs of this interface-finding procedure, the coarse-grained
+    density function is calculated using only a subset of the water molecules ('slice') within a
+    a cutoff distance of the search ray; this cutoff distance is set as `slicing_cutoff` *
+    `coarse_grain_length`. Setting the `slicing_cutoff` parameter smaller thus speeds up the
+    calculation but may introduce inaccuracies. In typical samples of water, the default value of
+    3.5 allows the interface to be calculated to an accuracy of within 0.01 A, and a value of 4 is
+    sufficient to achieve an accuracy of within 0.001 A.
+    """
 
     # Process water shape and unroll (collate) into a single array
     if len(waters.shape) == 2 and waters.shape[-1] == 3:
@@ -238,7 +314,7 @@ will be issued if the intersection cannot be found, in which case the output wil
     parallel_components = np.dot(sliced, axis)
     sliced = sliced[parallel_components > -slice_width]
     if sliced.shape[0] == 0:
-        warnings.warn('No waters encountered along search axis')
+        warnings.warn('No waters encountered along search axis', RuntimeWarning)
         return ((search_start, axis) if calc_normal else search_start)
 
     # Maximum z-coordinate to search
