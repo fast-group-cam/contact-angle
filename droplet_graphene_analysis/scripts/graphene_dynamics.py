@@ -25,8 +25,8 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from contact_angle.util import elapsed_time, read_droplet_trajectory
-from contact_angle.util.graphene import smooth_sheet, calc_inclination_angles
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+from droplet_graphene_analysis.util.graphene import smooth_sheet, calc_inclination_angles
 
 def main() -> None:
 

@@ -26,9 +26,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from scipy.optimize import curve_fit
-from contact_angle.util import elapsed_time, read_droplet_trajectory
-from contact_angle.util.droplet import find_interface
-from contact_angle.util.droplet.plot import plot_density_xz_slice
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+from droplet_graphene_analysis.util.droplet import find_interface
+from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
 
 def main() -> None:
 
@@ -41,7 +41,7 @@ def main() -> None:
     MAX_TAU = 25          # Maximum timescale to calculate autocorrelations (in number of frames)
     N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
 
-    from contact_angle.util.graphene.angle import CUTOFF_RADIUS as CARBON_RADIUS
+    from droplet_graphene_analysis.util.graphene.angle import CUTOFF_RADIUS as CARBON_RADIUS
     CARBON_RADIUS_SQ = CARBON_RADIUS**2
 
     #----------------------------------------------------------------------------------------------

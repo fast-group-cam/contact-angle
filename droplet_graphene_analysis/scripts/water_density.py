@@ -17,10 +17,10 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from contact_angle.util import elapsed_time, read_droplet_trajectory
-from contact_angle.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_DENSITY,
-                                                     find_interface)
-from contact_angle.util.droplet.plot import plot_density_xz_slice
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+from droplet_graphene_analysis.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_DENSITY,
+                                                                 find_interface)
+from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
 
 def main() -> None:
 

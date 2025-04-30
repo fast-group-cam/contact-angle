@@ -1,4 +1,4 @@
-# contact-angle
+# droplet-graphene-analysis
 
 A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python, and only requires `numpy`, `scipy`, `matplotlib`, and `ase` (which are automatically included as package dependencies). To use this package:
 

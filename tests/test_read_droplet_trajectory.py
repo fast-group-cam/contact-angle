@@ -1,5 +1,5 @@
 import numpy as np
-from contact_angle.util import read_droplet_trajectory
+from droplet_graphene_analysis.util import read_droplet_trajectory
 
 #==================================================================================================
 
