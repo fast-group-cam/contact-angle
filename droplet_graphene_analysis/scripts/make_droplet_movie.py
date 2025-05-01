@@ -20,6 +20,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
+from rich.console import Console
+from rich.progress import Progress
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.droplet.plot import (plot_density_xz_slice,
                                                          update_density_xz_slice)
@@ -59,24 +61,27 @@ def main() -> None:
     if os.path.isfile(args.output):
         os.remove(args.output)
 
-    #----------------------------------------------------------------------------------------------
-    # Read input file and iterate through frames
+    console = Console(highlight=False)
 
-    if len(args.input_file) == 1:
-        print(f'Reading "{args.input_file[0]}"...', end='')
-    else:
-        print(f'Reading {len(args.input_file)} files...', end='')
+    #----------------------------------------------------------------------------------------------
+    # Read input file and save coordinates
+
+    file_msg = (f'"{args.input_file[0]}"' if len(args.input_file) == 1 else
+                f'{len(args.input_file)} files')
+    
     time_start_0 = time.time()
-    time_start_1 = time.time()
-    cell_params, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file,
-                                                                       index=args.index)
-    N_frames = carbons.shape[0]
-    print(f'read {N_frames} frames in {elapsed_time(time_start_1)}.')
+    with console.status(f'[green]Reading {file_msg}...'):
+        _, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file, index=args.index)
+        N_frames = oxygens.shape[0]
+
+    console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
+                  f'[green]{elapsed_time(time_start_0)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Generate movie
 
-    print('Prerender processing...', end='')
+    time_start_1 = time.time()
+    console.print('Prerender processing...', end='')
 
     NC = carbons.shape[1]
     NH = hydrogens.shape[1]
@@ -140,21 +145,26 @@ def main() -> None:
     ax2d.set_ylabel(r'z [$\AA$]')
     ax2d.set_title('Density plot along xz slice')
 
+    console.print(f'complete in [green]{elapsed_time(time_start_1)}[/green].')
+    progress_bar = Progress(console=console, transient=True)
+    progress_bar.start()
+    progress_bar_task = progress_bar.add_task('Rendering...', total=N_frames)
+
     def update(frame):
         render3d._offsets3d = scatterpoints[frame].T
         render3d.set_facecolor(scattercolors[frame])
         frame_label.set(text=f'Frame #{frame}')
         update_density_xz_slice(oxygens[frame], carbons[frame], render2d)
-        print(f'    - rendered frame {frame} / {N_frames}...')
+        progress_bar.update(progress_bar_task, advance=1)
         return (render3d, frame_label, *render2d)
 
-    print('complete, now rendering...')
     time_start_1 = time.time()
     animation = anim.FuncAnimation(fig=fig, func=update, frames=N_frames,
                                    interval=int(np.round(1000 / args.framerate)), blit=False)
     animation.save(filename=args.output, writer='ffmpeg')
-    print(f'...done in {elapsed_time(time_start_1)}.')
-    print(f'Program completed in {elapsed_time(time_start_0)}.')
+    progress_bar.stop()
+    console.print(f'Rendered in [green]{elapsed_time(time_start_1)}[/green].')
+    console.print(f'Program completed in [green]{elapsed_time(time_start_0)}[/green].')
 
 #==================================================================================================
 # Run from src
