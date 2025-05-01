@@ -16,6 +16,8 @@ import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from rich.console import Console
+from rich.progress import track
 from scipy.optimize import curve_fit
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.droplet.coarse_grain import (COARSE_GRAIN_LENGTH, BULK_DENSITY,
@@ -52,20 +54,25 @@ def main() -> None:
     if os.path.isfile(args.output):
         os.remove(args.output)
     
+    console = Console(highlight=False)
+
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
+    file_msg = (f'"{args.input_file[0]}"' if len(args.input_file) == 1 else
+                f'{len(args.input_file)} files')
+    
     time_start = time.time()
-    cell_params, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
-    if len(args.input_file) == 1:
-        print(f'Read "{args.input_file[0]}" in {elapsed_time(time_start)}.')
-    else:
-        print(f'Read {len(args.input_file)} files in {elapsed_time(time_start)}.')
+    with console.status(f'[green]Reading {file_msg}...'):
+        _, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
+        N_frames = waters.shape[0]
+
+    console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
+                  f'[green]{elapsed_time(time_start)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Calculate outer limits of the droplet
 
-    N_frames = waters.shape[0]
     time_start = time.time()
 
     z_floor = np.inf
@@ -75,7 +82,8 @@ def main() -> None:
     theta = np.linspace(0, 2 * np.pi, 50, endpoint=False)
     axes = np.column_stack((np.cos(theta), np.sin(theta), np.zeros_like(theta)))
 
-    for f in range(N_frames):
+    for f in track(range(N_frames), description='Finding droplet geometry...', console=console,
+                   transient=True):
         CoM = np.mean(waters[f], axis=0)
         for axis in axes:
             inter = find_interface(waters[f], CoM, axis)
@@ -83,8 +91,9 @@ def main() -> None:
         z_ceil = max(z_ceil, find_interface(waters[f], CoM, (0, 0, 1))[2])
         z_floor = min(z_floor, find_interface(waters[f], CoM, (0, 0, -1))[2])
     
-    print(f'Found droplet maximal radius to be {r_max:.2f}\u212b and height to be ' +
-          f'{(z_ceil - z_floor):.2f}\u212b (time taken: {elapsed_time(time_start)}).')
+    console.print(f'Found droplet maximal radius to be [cyan]{r_max:.2f}\u212b[/cyan], and ' +
+                  f'height to be [cyan]{(z_ceil - z_floor):.2f}\u212b[/cyan], in ' +
+                  f'[green]{elapsed_time(time_start)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Calculate density bins
@@ -104,13 +113,12 @@ def main() -> None:
     axial_bin_height = axial_bin_edges[1] - axial_bin_edges[0]
     axial_bin_counts = np.zeros((args.N_bins,), dtype=float)
 
-    for f in range(N_frames):
-
+    for f in track(range(N_frames), description='Calculating densities...', console=console,
+                   transient=True):
         CoM = np.mean(waters[f,:,2])
         r_coords = np.sqrt(np.sum(np.square(waters[f,:,0:2]), axis=-1))
         radial_slice = r_coords[np.abs(waters[f,:,2] - CoM) < COARSE_GRAIN_LENGTH]
         axial_slice = waters[f, r_coords < COARSE_GRAIN_LENGTH, 2]
-
         radial_bin_counts += np.histogram(radial_slice, bins=radial_bin_edges)[0]
         axial_bin_counts += np.histogram(axial_slice, bins=axial_bin_edges)[0]
 
@@ -119,7 +127,7 @@ def main() -> None:
     axial_bin_counts /= N_frames
     axial_density = axial_bin_counts / (np.pi * (COARSE_GRAIN_LENGTH**2) * axial_bin_height)
 
-    print(f'Calculated density distribution in {elapsed_time(time_start)}.')
+    console.print(f'Calculated density distribution in [green]{elapsed_time(time_start)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Plot results
@@ -137,10 +145,14 @@ def main() -> None:
     fig.set_size_inches(14, 7)
     time_start = time.time()
 
-    if N_frames < 30:
-        plot_density_xz_slice(waters, carbons, ax[0][0])
-    else:
-        plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[0][0])
+    with console.status('[green]Plotting...'):
+        if N_frames < 30:
+            plot_density_xz_slice(waters, carbons, ax[0][0])
+            plot_density_xz_slice(waters, carbons, ax[1][0])
+        else:
+            plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[0][0])
+            plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[1][0])
+    
     ax[0][0].plot([-r_max, r_max], [CoM + COARSE_GRAIN_LENGTH, CoM + COARSE_GRAIN_LENGTH], '-',
                   color=(1, 0, 1))
     ax[0][0].plot([-r_max, r_max], [CoM - COARSE_GRAIN_LENGTH, CoM - COARSE_GRAIN_LENGTH], '-',
@@ -164,10 +176,6 @@ def main() -> None:
     ax[0][2].set_ylabel(r'$N_{O}(r)$')
     ax[0][2].set_title(r'Cumulative count $N_{O}$ within CoM disk')
 
-    if N_frames < 30:
-        plot_density_xz_slice(waters, carbons, ax[1][0])
-    else:
-        plot_density_xz_slice(waters[::int(N_frames / 30)], carbons, ax[1][0])
     ax[1][0].plot([-COARSE_GRAIN_LENGTH, -COARSE_GRAIN_LENGTH],
                   [z_floor - COARSE_GRAIN_LENGTH, z_ceil], '-', color=(1, 0, 1))
     ax[1][0].plot([COARSE_GRAIN_LENGTH, COARSE_GRAIN_LENGTH],
@@ -191,7 +199,7 @@ def main() -> None:
     ax[1][2].set_ylabel(r'$N_{O}(z)$')
     ax[1][2].set_title(r'Cumulative count $N_{O}$ along central axis')
 
-    print(f'Computed plots in {elapsed_time(time_start)}.')
+    console.print(f'Plotted in [green]{elapsed_time(time_start)}[/green].')
     fig.tight_layout()
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
     if args.opt_display:
