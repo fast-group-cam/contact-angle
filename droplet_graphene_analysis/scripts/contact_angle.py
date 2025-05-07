@@ -25,6 +25,8 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
+from rich.console import Console
+from rich.progress import track
 from scipy.optimize import curve_fit
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.droplet import find_interface
@@ -96,6 +98,8 @@ def main() -> None:
 
     # Number of azimuthal directions must be a multiple of 12
     N_azi = 12 * int(round(args.N_azimuths / 12))
+
+    console = Console(highlight=False)
 
     #----------------------------------------------------------------------------------------------
     # Helper functions
@@ -188,17 +192,17 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
-    if len(args.input_file) == 1:
-        print(f'Reading "{args.input_file[0]}"...', end='')
-    else:
-        print(f'Reading {len(args.input_file)} files...', end='')
+    file_msg = (f'"{args.input_file[0]}"' if len(args.input_file) == 1 else
+                f'{len(args.input_file)} files')
+    
     time_start_0 = time.time()
-    cell_params, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
-    N_frames = waters.shape[0]
-    N_water = waters.shape[1]
-    N_carbon = carbons.shape[1]
-    print(f'read {N_frames} frames of {N_water} water molecules and {N_carbon} carbon atoms in ' +
-          f'{elapsed_time(time_start_0)}.')
+    with console.status(f'[green]Reading {file_msg}...'):
+        _, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
+        N_frames = waters.shape[0]
+        N_water = waters.shape[1]
+
+    console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
+                  f'[green]{elapsed_time(time_start_0)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Create output log file
@@ -208,9 +212,6 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Calculate instantaneous interfaces for every frame and measure autocorrelations etc.
 
-    time_start_1 = time.time()
-    print('Computing instantaneous interfaces for every frame...')
-
     azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
     search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
     search_perp = np.c_[-np.sin(azi), np.cos(azi)]
@@ -218,7 +219,9 @@ def main() -> None:
     contact_angles = np.empty((N_frames, N_azi), dtype=float)
     ooplane_angles = np.empty((N_frames, N_azi), dtype=float)
 
-    for f in range(N_frames):
+    time_start_1 = time.time()
+    for f in track(range(N_frames), description='Computing instantaneous interfaces...',
+                   console=console, transient=True):
 
         interfaces, normals = droplet_foot_interfaces(waters[f:f+1], carbons[f:f+1], search_dirs)
         
@@ -234,49 +237,46 @@ def main() -> None:
         proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
         ooplane_angles[f] = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
     
-    time_start_2 = time.time()
-    print(f'    - computed instantaneous interfaces in {elapsed_time(time_start_1)}...')
-    print('    - calculating time correlations...', end='')
+    console.print('Computed instantaneous interfaces in ' +
+                  f'[green]{elapsed_time(time_start_1)}[/green].')
+    
+    time_start_1 = time.time()
+    with console.status('[green]Computing correlations...'):
 
-    max_tau = min(N_frames - 1, args.max_tau)
-    contact_angle_time_corrs = np.empty((max_tau,), dtype=float)
-    contact_angle_time_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
-    for tau in range(1, max_tau):
-        contact_angle_time_corrs[tau] = np.mean(contact_angles[:-tau] * contact_angles[tau:], axis=(0,1))
-    contact_angle_time_corrs[:] /= contact_angle_time_corrs[0]
-    contact_angle_time_popt = exp_fit(contact_angle_time_corrs, k0=1.0, c0=0.998)
+        max_tau = min(N_frames - 1, args.max_tau)
+        contact_angle_time_corrs = np.empty((max_tau,), dtype=float)
+        contact_angle_time_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
+        for tau in range(1, max_tau):
+            contact_angle_time_corrs[tau] = np.mean(contact_angles[:-tau] * contact_angles[tau:], axis=(0,1))
+        contact_angle_time_corrs[:] /= contact_angle_time_corrs[0]
+        contact_angle_time_popt = exp_fit(contact_angle_time_corrs, k0=1.0, c0=0.998)
 
-    ooplane_angle_time_corrs = np.empty((max_tau,), dtype=float)
-    ooplane_angle_time_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
-    for tau in range(1, max_tau):
-        ooplane_angle_time_corrs[tau] = np.mean(ooplane_angles[:-tau] * ooplane_angles[tau:], axis=(0,1))
-    ooplane_angle_time_corrs[:] /= ooplane_angle_time_corrs[0]
-    ooplane_angle_time_popt = exp_fit(ooplane_angle_time_corrs, k0=0.5, c0=0.1)
+        ooplane_angle_time_corrs = np.empty((max_tau,), dtype=float)
+        ooplane_angle_time_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
+        for tau in range(1, max_tau):
+            ooplane_angle_time_corrs[tau] = np.mean(ooplane_angles[:-tau] * ooplane_angles[tau:], axis=(0,1))
+        ooplane_angle_time_corrs[:] /= ooplane_angle_time_corrs[0]
+        ooplane_angle_time_popt = exp_fit(ooplane_angle_time_corrs, k0=0.5, c0=0.1)
 
-    print(f'done in {elapsed_time(time_start_2)}.')
-    print('    - calculating azimuthal correlations...', end='')
-    time_start_2 = time.time()
+        max_a = int(N_azi / 2)
+        contact_angle_azi_corrs = np.empty((max_a,), dtype=float)
+        contact_angle_azi_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
+        for a in range(1, max_a):
+            contact_angle_azi_corrs[a] = np.mean(contact_angles[:,:-a] * contact_angles[:,a:], axis=(0,1))
+        contact_angle_azi_corrs[:] /= contact_angle_azi_corrs[0]
+        contact_angle_azi_popt = exp_fit(contact_angle_azi_corrs, k0=1.0, c0=0.978)
+        contact_angle_azi_popt[1] *= N_azi / 360.0
 
-    max_a = int(N_azi / 2)
-    contact_angle_azi_corrs = np.empty((max_a,), dtype=float)
-    contact_angle_azi_corrs[0] = np.mean(np.square(contact_angles), axis=(0,1))
-    for a in range(1, max_a):
-        contact_angle_azi_corrs[a] = np.mean(contact_angles[:,:-a] * contact_angles[:,a:], axis=(0,1))
-    contact_angle_azi_corrs[:] /= contact_angle_azi_corrs[0]
-    contact_angle_azi_popt = exp_fit(contact_angle_azi_corrs, k0=1.0, c0=0.978)
-    contact_angle_azi_popt[1] *= N_azi / 360.0
+        ooplane_angle_azi_corrs = np.empty((max_a,), dtype=float)
+        ooplane_angle_azi_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
+        for a in range(1, max_a):
+            ooplane_angle_azi_corrs[a] = np.mean(ooplane_angles[:,:-a] * ooplane_angles[:,a:], axis=(0,1))
+        ooplane_angle_azi_corrs[:] /= ooplane_angle_azi_corrs[0]
+        ooplane_angle_azi_corrs = np.abs(ooplane_angle_azi_corrs)
+        ooplane_angle_azi_popt = exp_fit(ooplane_angle_azi_corrs, k0=10.0, c0=0.05)
+        ooplane_angle_azi_popt[1] *= N_azi / 360.0
 
-    ooplane_angle_azi_corrs = np.empty((max_a,), dtype=float)
-    ooplane_angle_azi_corrs[0] = np.mean(np.square(ooplane_angles), axis=(0,1))
-    for a in range(1, max_a):
-        ooplane_angle_azi_corrs[a] = np.mean(ooplane_angles[:,:-a] * ooplane_angles[:,a:], axis=(0,1))
-    ooplane_angle_azi_corrs[:] /= ooplane_angle_azi_corrs[0]
-    ooplane_angle_azi_corrs = np.abs(ooplane_angle_azi_corrs)
-    ooplane_angle_azi_popt = exp_fit(ooplane_angle_azi_corrs, k0=10.0, c0=0.05)
-    ooplane_angle_azi_popt[1] *= N_azi / 360.0
-
-    print(f'done in {elapsed_time(time_start_2)}.')
-    print(f'Done in {elapsed_time(time_start_1)}.')
+    console.print(f'Computed correlations in [green]{elapsed_time(time_start_1)}[/green].')
 
     fig = plt.figure(figsize=(14, 7), layout='constrained')
     subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
@@ -333,82 +333,89 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
 
-    time_start_1 = time.time()
-    print('Computing time-averaged interface...')
-
     azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
     search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
     search_perp = np.c_[-np.sin(azi), np.cos(azi)]
-    interfaces, normals = droplet_foot_interfaces(waters, carbons, search_dirs)
-    if args.local:
-        flat_carbons = carbons.reshape(-1, 3)
-        local_carbons_c = np.empty((N_azi, 3), dtype=float)
-        local_carbons_n = np.empty((N_azi, 3), dtype=float)
-        contact_angles = np.empty((N_azi,), dtype=float)
-        for i, inter in enumerate(interfaces):
-            nearby = flat_carbons[np.sum((flat_carbons[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
-            local_carbons_c[i] = np.mean(nearby, axis=0)
-            local_carbons_n[i] = np.linalg.svd(nearby - local_carbons_c[i], full_matrices=False)[2][-1]
-            local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i]) * np.sign(local_carbons_n[i,2])
-            contact_angles[i] = np.arccos(np.dot(normals[i], local_carbons_n[i])) * 180 / np.pi
-    else:
-        contact_angles = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
 
-    proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
-    ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+    time_start_1 = time.time()
+    with console.status('[green]Computing time-averaged interface...'):
 
-    CoM = np.mean(waters, axis=(0,1))
-    cylinder_r, cylinder_c = cylinder_fit(interfaces)
+        interfaces, normals = droplet_foot_interfaces(waters, carbons, search_dirs)
 
-    time_start_2 = time.time()
-    print(f'    - computed time-averaged interface in {elapsed_time(time_start_1)}.')
-    print('    - plotting time-averaged density functions...', end='')
+        if args.local:
+            flat_carbons = carbons.reshape(-1, 3)
+            local_carbons_c = np.empty((N_azi, 3), dtype=float)
+            local_carbons_n = np.empty((N_azi, 3), dtype=float)
+            contact_angles = np.empty((N_azi,), dtype=float)
+            for i, inter in enumerate(interfaces):
+                nearby = flat_carbons[np.sum((flat_carbons[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
+                local_carbons_c[i] = np.mean(nearby, axis=0)
+                local_carbons_n[i] = np.linalg.svd(nearby - local_carbons_c[i], full_matrices=False)[2][-1]
+                local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i]) * np.sign(local_carbons_n[i,2])
+                contact_angles[i] = np.arccos(np.dot(normals[i], local_carbons_n[i])) * 180 / np.pi
 
+        else:
+
+            contact_angles = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
+
+        proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
+        ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+
+        CoM = np.mean(waters, axis=(0,1))
+        cylinder_r, cylinder_c = cylinder_fit(interfaces)
+
+    console.print('Computed time-averaged interface in ' +
+                  f'[green]{elapsed_time(time_start_1)}[/green].')
+    
     fig, ax = plt.subplots(2, 3)
     fig.set_size_inches(15, 5)
     interval = max(int(N_frames * N_water / 2e5), 1)
-    for i in range(2):
-        for j in range(3):
 
-            idx = ((3 * i) + j) * int(N_azi / 12)
-            angle = azi[idx]
-            rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
-                                   (-np.sin(angle), np.cos(angle), 0.0),
-                                   (0.0,            0.0,           1.0)))
-            rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
-            rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
-            plot_density_xz_slice(rot_waters, rot_carbons, ax[i][j], show_interface=True,
-                                  color_inter = (1.0, 0.0, 1.0, 0.4))
+    time_start_1 = time.time()
+    for i in track(range(6), description='Plotting time-averaged density functions...',
+                   console=console, transient=True):
+
+        idx = i * (N_azi // 12)
+        angle = azi[idx]
+        rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
+                               (-np.sin(angle), np.cos(angle), 0.0),
+                               (0.0,            0.0,           1.0)))
+        rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
+        rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
+        plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True,
+                              color_inter = (1.0, 0.0, 1.0, 0.4))
             
-            for k in (0, int(N_azi / 2)):
-                if args.local:
-                    rot_carbon_c = rot_matrix @ local_carbons_c[idx + k]
-                    rot_carbon_n = rot_matrix @ local_carbons_n[idx + k]
-                    a_x = rot_carbon_c[0] - CARBON_RADIUS
-                    a_z = rot_carbon_c[2] + (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
-                    b_x = rot_carbon_c[0] + CARBON_RADIUS
-                    b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
-                    ax[i][j].plot((a_x, b_x), (a_z, b_z), 'k-')
-                rot_inter = rot_matrix @ interfaces[idx + k]
-                rot_norm = rot_matrix @ normals[idx + k]
-                a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
-                b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
-                ax[i][j].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
-            ax[i][j].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
-            ax[i][j].text(0.01, 0.99, (r'$\theta_{left}\;=\;' + f'{contact_angles[idx + int(N_azi / 2)]:.1f}' +
-                                       r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
-                                       f'{contact_angles[idx]:.1f}' + r'\degree$'), ha='left',
-                                       va='top', transform=ax[i][j].transAxes)
+        for k in (0, int(N_azi / 2)):
+            if args.local:
+                rot_carbon_c = rot_matrix @ local_carbons_c[idx + k]
+                rot_carbon_n = rot_matrix @ local_carbons_n[idx + k]
+                a_x = rot_carbon_c[0] - CARBON_RADIUS
+                a_z = rot_carbon_c[2] + (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
+                b_x = rot_carbon_c[0] + CARBON_RADIUS
+                b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
+                ax[i // 3][i % 3].plot((a_x, b_x), (a_z, b_z), 'k-')
+            rot_inter = rot_matrix @ interfaces[idx + k]
+            rot_norm = rot_matrix @ normals[idx + k]
+            a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
+            b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
+            ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
+        ax[i // 3][i % 3].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
+        ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
+                                            f'{contact_angles[idx + (N_azi // 2)]:.1f}' +
+                                            r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
+                                            f'{contact_angles[idx]:.1f}' + r'\degree$'),
+                                            ha='left', va='top',
+                                            transform=ax[i // 3][i % 3].transAxes)
 
-            ax[i][j].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
+        ax[i // 3][i % 3].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
 
     fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
     fig.tight_layout()
     fig.savefig(os.path.join(args.output, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
                 bbox_inches='tight', pad_inches=0.05)
     
-    print(f'done in {elapsed_time(time_start_2)}.')
-    print(f'Done in {elapsed_time(time_start_1)}.')
+    console.print('Plotted time-averaged density functions in ' +
+                  f'[green]{elapsed_time(time_start_1)}[/green].')
 
     log_file.write('-------------------------\n')
     log_file.write(' Time-averaged interface\n')
@@ -433,8 +440,15 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # End of program
 
-    print(f'Program completed in {elapsed_time(time_start_0)}.')
+    final_elapsed_time = elapsed_time(time_start_0)
+
+    log_file.write('-------\n')
+    log_file.write(' Misc.\n')
+    log_file.write('-------\n\n')
+    log_file.write(f'Program wall time = {final_elapsed_time}\n\n')
     log_file.close()
+
+    print(f'Program completed in {final_elapsed_time}.')
     sys.exit()
 
 #==================================================================================================
