@@ -44,11 +44,11 @@ def best_fit_sphere(points: np.ndarray, d: int = None) -> tuple[float, np.ndarra
         The Cartesian coordinates of the center of the best-fit sphere, with shape (d,).
     """
     dims = (points.shape[-1] if d is None else int(d))
-    A_mat = np.empty((points.shape[0], dims), dtype=float)
+    A_mat = np.empty((points.shape[0], dims+1), dtype=float)
     A_mat[:,0:dims] = 2 * points[:,0:dims]
     A_mat[:,dims] = 1
     f_vec = np.empty((points.shape[0], 1), dtype=float)
     f_vec[:,0] = np.sum((points[:,0:dims])**2, axis=-1)
-    c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec)
+    c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec, rcond=None)
     a = np.sqrt(np.sum(np.square(c_vec[0:dims,0])) + c_vec[dims,0])
     return (a, c_vec[0:dims,0])
