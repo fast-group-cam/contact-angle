@@ -24,6 +24,9 @@ import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+
+from rich.console import Console
+from rich.progress import track
 from scipy.optimize import curve_fit
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.graphene import smooth_sheet, calc_inclination_angles
@@ -80,38 +83,47 @@ def main() -> None:
     if args.autocorr_range is not None:
         args.autocorr_range = min(0.5 * abs(args.autocorr_range), 0.5)
     
+    console = Console(highlight=False)
+
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
-    time_start = time.time()
-    cell_params, _, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
-    cell_xy = cell_params[0:2]
-    if len(args.input_file) == 1:
-        print(f'Read "{args.input_file[0]}" in {elapsed_time(time_start)}.')
-    else:
-        print(f'Read {len(args.input_file)} files in {elapsed_time(time_start)}.')
+    file_msg = (f'"{args.input_file[0]}"' if len(args.input_file) == 1 else
+                f'{len(args.input_file)} files')
+    
+    time_start_0 = time.time()
+    with console.status(f'[green]Reading {file_msg}...'):
+        cell_params, _, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
+        cell_xy = cell_params[0:2]
+        N_frames = carbons.shape[0]
+
+    console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
+                  f'[green]{elapsed_time(time_start_0)}[/green].')
     
     #----------------------------------------------------------------------------------------------
     # Calculate interpolated z-heights
 
-    time_start = time.time()
-    sheet = np.zeros((carbons.shape[0], args.N_x, args.N_y), dtype=float)
-    for f, carbon_atoms in enumerate(carbons):
-        sheet[f] = smooth_sheet(carbon_atoms, cell_xy, (args.N_x, args.N_y))
-    print(f'Calculated interpolated z-heights in {elapsed_time(time_start)}.')
+    time_start_1 = time.time()
+    sheet = np.zeros((N_frames, args.N_x, args.N_y), dtype=float)
+    for f in track(range(N_frames), description='Interpolating z-heights...', console=console,
+                   transient=True):
+        sheet[f] = smooth_sheet(carbons[f], cell_xy, (args.N_x, args.N_y))
+    console.print(f'Interpolated z-heights in [green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Calculate local inclination angles
 
-    time_start = time.time()
-    angles = calc_inclination_angles(carbons, cell_xy, (args.N_x, args.N_y))
-    print(f'Calculated local inclination angles in {elapsed_time(time_start)}.')
+    time_start_1 = time.time()
+    with console.status('[green]Calculating local inclination angles...'):
+        angles = calc_inclination_angles(carbons, cell_xy, (args.N_x, args.N_y))
+    console.print('Calculated local inclination angles in ' +
+                  f'[green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Calculate normalized infinite-time autocorrelations of local inclination angles
 
-    time_start = time.time()
-    max_tau = min(args.max_tau, carbons.shape[0] - 1)
+    time_start_1 = time.time()
+    max_tau = min(args.max_tau, N_frames - 1)
     autocorr = np.zeros((max_tau, args.N_x, args.N_y), dtype=float)
     autocorr[0] = np.mean(np.square(angles), axis=0)
     for tau in range(1, max_tau):
@@ -123,7 +135,8 @@ def main() -> None:
 
     tau = np.array(range(max_tau))
     inf_autoc = np.zeros((args.N_x, args.N_y), dtype=float)
-    for i in range(args.N_x):
+    for i in track(range(args.N_x), description='Calculating autocorrelations...', console=console,
+                   transient=True):
         for j in range(args.N_y):
             try:
                 popt, _ = curve_fit(exp_curve, tau, autocorr[:,i,j], p0=(0.5, 0.8),
@@ -131,7 +144,7 @@ def main() -> None:
                 inf_autoc[i,j] = max(popt[-1], 0.0)
             except RuntimeError:
                 inf_autoc[i,j] = 0.0
-    print(f'Calculated autocorrelations in {elapsed_time(time_start)}.')
+    console.print(f'Calculated autocorrelations in [green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Display plots
@@ -211,6 +224,7 @@ def main() -> None:
 
     fig.tight_layout()
     fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
+    console.print(f'Program completed in [green]{elapsed_time(time_start_0)}[/green].')
     if args.opt_display:
         plt.show()
 
