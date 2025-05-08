@@ -7,13 +7,26 @@ prog_desc_header = '''
  either a time evolution or a single snapshot of a water droplet (rotationally symmetric about the
  z-axis) on a graphene sheet aligned aligned to the xy plane. The contact angle is calculated by
  finding the Willard-Chandler interface for a small number of testpoints at the droplet's foot,
- and calculating the direction of the plane.
+ and calculating the direction of the plane. Use as:
 
- The program takes some number of frames `N_frames` from the input file (which is specified by the
- user). The action of the program depends on the user inputs:
+ >    python contact_angle.py <input_file(s)> [--index <index>] [--N_azimuths <N_azimuths]
+          [--local] [--z_foot <z_foot>] [--max_tau <max_tau>] [--block_average]
+          [--blocksize <blocksize>] [-o <output_dir>]
 
-   (1) WIP
+ The program performs the following actions in sequence:
 
+ (1) It calculates the instantaneous interface at every frame of the provided trajectory, and plots
+ the dynamic evolution of the surface as a function of time and azimuth;
+
+ (2) It calculates the time-averaged interface across the entire trajectory, and plots selected
+ cross-sections of the time-averaged density function;
+
+ (3) If --block_average is enabled, it splits the trajectories into continuous blocks and finds the
+ time-averaged interface for each block, to obtain unbiased estimates of the uncertainties of the
+ full trajectory time-averaged observables.
+
+ All plots will be saved to an output directory (specified by the -o option), which defaults to
+ "contact-angle" within the parent directory that this program is executed from.
 ===================================================================================================
 '''
 
@@ -28,9 +41,10 @@ import matplotlib.pyplot as plt
 from rich.console import Console
 from rich.progress import track
 from scipy.optimize import curve_fit
-from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory, best_fit_sphere
 from droplet_graphene_analysis.util.droplet import find_interface
 from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
+from droplet_graphene_analysis.util.graphene import generate_grid, smooth_sheet
 
 def main() -> None:
 
@@ -68,13 +82,13 @@ def main() -> None:
                         help='height (in angstroms) of the droplet foot above the graphene sheet')
     parser.add_argument('--max_tau', type=int, default=MAX_TAU, dest='max_tau',
                         help='maximum timescale (in no. of frames) to calculate autocorrelations')
-    parser.add_argument('--block-average', action='store_true', dest='block_average',
+    parser.add_argument('--block_average', action='store_true', dest='block_average',
                         help=('perform reverse cumulative averaging for unbiased uncertainty ' +
                               'estimates over varying block sizes'))
     parser.add_argument('-b', '--blocksize', type=int, default=None, dest='blocksize',
                         help=('if --block-average is turned on, disables automatic block sizing ' +
                               'and enforces specified block size'))
-    parser.add_argument('-o', '--output', default='contact-angle', dest='output',
+    parser.add_argument('-o', '--output', default='contact-angle', dest='output_dir',
                         help='output folder to save log and graphical outputs to')
     args = parser.parse_args()
 
@@ -93,8 +107,8 @@ def main() -> None:
     elif args.blocksize < 1:
         raise RuntimeError(f'Block size ({args.blocksize}) must be positive.')
 
-    if not os.path.isdir(args.output):
-        os.mkdir(args.output)
+    if not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
 
     # Number of azimuthal directions must be a multiple of 12
     N_azi = 12 * int(round(args.N_azimuths / 12))
@@ -116,26 +130,6 @@ def main() -> None:
         except RuntimeError:
             mu = np.mean(data)
             return np.array((1 - mu, np.inf, mu))
-
-    def sphere_fit(points):
-        A_mat = np.empty((points.shape[0], 4), dtype=float)
-        A_mat[:,0:3] = 2 * points
-        A_mat[:,3] = 1
-        f_vec = np.empty((points.shape[0], 1), dtype=float)
-        f_vec[:,0] = np.sum(np.square(points), axis=-1)
-        c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec)
-        radius = np.sqrt(np.sum(np.square(c_vec[0:3,0])) + c_vec[3,0])
-        return (radius, c_vec[0:3,0])
-    
-    def cylinder_fit(points):
-        A_mat = np.empty((points.shape[0], 3), dtype=float)
-        A_mat[:,0:2] = 2 * points[:,0:2]
-        A_mat[:,2] = 1
-        f_vec = np.empty((points.shape[0], 1), dtype=float)
-        f_vec[:,0] = np.sum(np.square(points[:,0:2]), axis=-1)
-        c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec)
-        radius = np.sqrt(np.sum(np.square(c_vec[0:2,0])) + c_vec[2,0])
-        return (radius, c_vec[0:2,0])
 
     def plot_against_time_and_azimuth(fig, ax, data, title, var_label):
         N_x = data.shape[0]
@@ -197,7 +191,7 @@ def main() -> None:
     
     time_start_0 = time.time()
     with console.status(f'[green]Reading {file_msg}...'):
-        _, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
+        cell_params, waters, carbons, _ = read_droplet_trajectory(args.input_file, index=args.index)
         N_frames = waters.shape[0]
         N_water = waters.shape[1]
 
@@ -205,9 +199,23 @@ def main() -> None:
                   f'[green]{elapsed_time(time_start_0)}[/green].')
 
     #----------------------------------------------------------------------------------------------
+    # Calculate smoothened carbon sheets for every frame (if --local option is turned on)
+
+    if args.local:
+        sheet_res_x = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
+        sheet_res_y = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
+        sheet_gridpts = generate_grid((sheet_res_x, sheet_res_y), cell_params[0:2])
+        sheets = np.empty((N_frames, sheet_res_x, sheet_res_y), dtype=float)
+        time_start_1 = time.time()
+        for f in track(range(N_frames), description='Processing graphene sheet...',
+                       console=console, transient=True):
+            sheets[f] = smooth_sheet(carbons[f], cell_params[0:2], (sheet_res_x, sheet_res_y))
+        console.print(f'Processed graphene sheet in [green]{elapsed_time(time_start_1)}[/green].')
+
+    #----------------------------------------------------------------------------------------------
     # Create output log file
 
-    log_file = open(os.path.join(args.output, 'log.txt'), 'w', encoding='utf-8')
+    log_file = open(os.path.join(args.output_dir, 'log.txt'), 'w', encoding='utf-8')
 
     #----------------------------------------------------------------------------------------------
     # Calculate instantaneous interfaces for every frame and measure autocorrelations etc.
@@ -227,7 +235,8 @@ def main() -> None:
         
         if args.local:
             for i, inter in enumerate(interfaces):
-                nearby = carbons[f, np.sum((carbons[f,:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
+                nearby_idx = np.sum((sheet_gridpts - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ
+                nearby = np.concat([sheet_gridpts[nearby_idx], sheets[f, nearby_idx, None]], axis=-1)
                 local_norm = np.linalg.svd(nearby - np.mean(nearby, axis=0), full_matrices=False)[2][-1]
                 local_norm /= np.linalg.norm(local_norm) * np.sign(local_norm[2])
                 contact_angles[f, i] = np.arccos(np.dot(normals[i], local_norm)) * 180 / np.pi
@@ -295,7 +304,7 @@ def main() -> None:
     ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
     ax[1].set_ylabel(r'$C_{\theta}(\varphi)$')
     ax[1].set_title('Normalized autocorrelation of contact angle against azimuth')
-    fig.savefig(os.path.join(args.output, 'inst_contact_angles.png'), dpi=(3*fig.dpi),
+    fig.savefig(os.path.join(args.output_dir, 'inst_contact_angles.png'), dpi=(3*fig.dpi),
                 bbox_inches='tight', pad_inches=0.05)
     
     fig = plt.figure(figsize=(14, 7), layout='constrained')
@@ -313,7 +322,7 @@ def main() -> None:
     ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
     ax[1].set_ylabel(r'$C_{\delta}(\varphi)$')
     ax[1].set_title('Normalized autocorrelation of out-of-plane angle against azimuth')
-    fig.savefig(os.path.join(args.output, 'inst_out-of-plane_angles.png'), dpi=(3*fig.dpi),
+    fig.savefig(os.path.join(args.output_dir, 'inst_out-of-plane_angles.png'), dpi=(3*fig.dpi),
                 bbox_inches='tight', pad_inches=0.05)
 
     log_file.write('-------------------------\n')
@@ -343,12 +352,15 @@ def main() -> None:
         interfaces, normals = droplet_foot_interfaces(waters, carbons, search_dirs)
 
         if args.local:
-            flat_carbons = carbons.reshape(-1, 3)
+
+            mean_sheet = np.mean(sheets, axis=0)
             local_carbons_c = np.empty((N_azi, 3), dtype=float)
             local_carbons_n = np.empty((N_azi, 3), dtype=float)
             contact_angles = np.empty((N_azi,), dtype=float)
+
             for i, inter in enumerate(interfaces):
-                nearby = flat_carbons[np.sum((flat_carbons[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
+                nearby_idx = np.sum((sheet_gridpts - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ
+                nearby = np.concat([sheet_gridpts[nearby_idx], mean_sheet[nearby_idx, None]], axis=-1)
                 local_carbons_c[i] = np.mean(nearby, axis=0)
                 local_carbons_n[i] = np.linalg.svd(nearby - local_carbons_c[i], full_matrices=False)[2][-1]
                 local_carbons_n[i] /= np.linalg.norm(local_carbons_n[i]) * np.sign(local_carbons_n[i,2])
@@ -360,9 +372,39 @@ def main() -> None:
 
         proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
         ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+        cylinder_r, cylinder_c = best_fit_sphere(interfaces, d=2)
 
         CoM = np.mean(waters, axis=(0,1))
-        cylinder_r, cylinder_c = cylinder_fit(interfaces)
+        phi = 2 * np.pi * np.random.random(N_SPHERE_PTS)
+        cosine_theta = np.random.random(N_SPHERE_PTS)
+        sine_theta = np.sqrt(1.0 - (cosine_theta**2))
+        axes = np.c_[np.cos(phi) * sine_theta, np.sin(phi) * sine_theta, cosine_theta]
+        sphere_pts = np.empty((N_SPHERE_PTS, 3))
+        for i in range(N_SPHERE_PTS):
+            sphere_pts[i,:] = find_interface(waters, CoM, axes[i])
+        sphere_r, sphere_c = best_fit_sphere(sphere_pts, d=3)
+        if args.local:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                try:
+                    intersection_r = np.sqrt((sphere_r**2) - (sphere_c[2]**2))
+                    sheet_radials = np.sqrt(np.sum(sheet_gridpts**2, axis=-1))
+                    for _ in range(5):
+                        nearby_idx = np.abs(sheet_radials - intersection_r) < CARBON_RADIUS
+                        intersection_z = np.mean(mean_sheet[nearby_idx])
+                        intersection_r = np.sqrt((sphere_r**2) - ((sphere_c[2] - intersection_z)**2))
+                    nearby_idx = np.abs(sheet_radials - intersection_r) < CARBON_RADIUS
+                    intersection_z = np.mean(mean_sheet[nearby_idx])
+                    sphere_angle = 90.0 + (np.arcsin((sphere_c[2] - intersection_z) / sphere_r) * 180.0 / np.pi)
+                    nearby_grad = np.polyfit(sheet_radials[nearby_idx], mean_sheet[nearby_idx], 1)[0]
+                    sphere_angle += np.arctan(nearby_grad) * 180.0 / np.pi
+                except RuntimeWarning:
+                    sphere_angle = (180.0 if sphere_c[2] > 0.0 else 0.0)
+        else:
+            if np.abs(sphere_c[2]) < sphere_r:
+                sphere_angle = 90.0 + (np.arcsin(sphere_c[2] / sphere_r) * 180.0 / np.pi)
+            else:
+                sphere_angle = (180.0 if sphere_c[2] > 0.0 else 0.0)
 
     console.print('Computed time-averaged interface in ' +
                   f'[green]{elapsed_time(time_start_1)}[/green].')
@@ -411,7 +453,7 @@ def main() -> None:
 
     fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
     fig.tight_layout()
-    fig.savefig(os.path.join(args.output, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
+    fig.savefig(os.path.join(args.output_dir, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
                 bbox_inches='tight', pad_inches=0.05)
     
     console.print('Plotted time-averaged density functions in ' +
@@ -426,10 +468,13 @@ def main() -> None:
     log_file.write(f'Mean out-of-plane angle = {np.mean(ooplane_angles)} [deg]\n')
     log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
     log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
-    log_file.write(f'Center-of-mass x-, y-coordinates = {CoM[0:2]} [A]\n')
     log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
     log_file.write(f'Best-fit edge circle center (x, y) = {cylinder_c} [A]\n')
     log_file.write(f'Best-fit edge circle radius = {cylinder_r} [A]\n\n')
+    log_file.write(f'Best-fit sphere center (x, y) = ({sphere_c[0]}, {sphere_c[1]}) [A]\n')
+    log_file.write(f'Best-fit sphere z-height = {sphere_c[2]} [A]\n')
+    log_file.write(f'Best-fit sphere radius = {sphere_r} [A]\n')
+    log_file.write(f'Best-fit sphere contact angle = {sphere_angle} [deg]\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
