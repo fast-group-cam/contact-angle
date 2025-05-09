@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mplc
 
 from rich.console import Console
-from rich.progress import track
+from rich.progress import track, Progress
 from scipy.optimize import curve_fit
 from matplotlib.cm import ScalarMappable
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory, best_fit_sphere
@@ -132,9 +132,6 @@ def main() -> None:
         except RuntimeError:
             mu = np.mean(data)
             return np.array((1 - mu, np.inf, mu))
-        
-    def piecewise_linear(x, k, x0):
-        return np.where(x < x0, k * x, k * x0)
 
     def plot_against_time_and_azimuth(fig, ax, data, title, var_label):
         N_x = data.shape[0]
@@ -360,6 +357,8 @@ def main() -> None:
     log_file.write(f'Out-of-plane angle correlation time = {1 / ooplane_angle_time_popt[1]} [frames]\n')
     log_file.write(f'Out-of-plane angle azimuthal correlation scale = {1 / ooplane_angle_azi_popt[1]} [deg]\n\n')
 
+    contact_angle_inst_var = np.var(np.mean(contact_angles, axis=-1))
+
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
 
@@ -519,6 +518,8 @@ def main() -> None:
         max_phi = np.arccos(np.clip(-sphere_c[2] / sphere_r, -1.0, 1.0))
         phi = np.linspace(0, max_phi, 100)
         ax.plot(sphere_r * np.sin(phi), sphere_c[2] + (sphere_r * np.cos(phi)), 'g-')
+        ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{sphere_angle:.1f}' + r'\degree$'),
+                ha='right', va='top', transform=ax.transAxes)
         ax.set_xlabel(r'r ($\AA$)')
         ax.set_ylabel(r'z ($\AA$)')
         ax.set_title('Spherical fit over histogram of water density')
@@ -538,7 +539,7 @@ def main() -> None:
     log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
     log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
     log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
-    log_file.write(f'Best-fit edge circle center (x, y) = {cylinder_c} [A]\n')
+    log_file.write(f'Best-fit edge circle center (x, y) = ({cylinder_c[0]}, {cylinder_c[1]}) [A]\n')
     log_file.write(f'Best-fit edge circle radius = {cylinder_r} [A]\n\n')
     log_file.write(f'Best-fit sphere center (x, y) = ({sphere_c[0]}, {sphere_c[1]}) [A]\n')
     log_file.write(f'Best-fit sphere z-height = {sphere_c[2]} [A]\n')
@@ -557,7 +558,7 @@ def main() -> None:
 
         time_start_1 = time.time()
         for i in progress_bar_iter(N_blocks, 'Computing block averages...'):
-            _, _, contact_angles, *_ = calculate_observables(i * args.blocksize, (i + 1) * args.blocksize)
+            _, _, contact_angles, *_ = calculate_observables(i * args.blocksize, (i+1) * args.blocksize)
             contact_angle_block_means[i] = np.mean(contact_angles)
         console.print(f'Computed block averages in [green]{elapsed_time(time_start_1)}[/green].')
 
@@ -573,8 +574,67 @@ def main() -> None:
     # Calculate block-averages of time-averaged interfaces (for automatic blocksizing)
 
     elif args.block_average and args.blocksize is None:
-        console.print('[red]Sorry, automatic determination of block averaging not implemented yet -- WIP!')
 
+        if N_frames < 150:
+            raise RuntimeError('Too few frames in the trajectory for automatic blocksizing.')
+        blocksize_interval = max(N_frames // 150, 1)
+        blocksizes = [(i+1) * blocksize_interval for i in range(30)]
+        contact_angle_block_means = np.empty(30, dtype=float)
+        contact_angle_block_vars = np.empty(30, dtype=float)
+        N_blocks = np.empty(30, dtype=int)
+
+        time_start_1 = time.time()
+        progress_bar = Progress(console=console, transient=True)
+        progress_bar.start()
+        progress_bar_parent_task = progress_bar.add_task('Scanning blocksizes...', total=30)
+        for b in range(30):
+            N_blocks[b] = N_frames // blocksizes[b]
+            block_means = np.empty(N_blocks[b])
+            progress_bar_child_task = progress_bar.add_task(f'Computing block averages (b = {blocksizes[b]})...', total=N_blocks[b])
+            for i in range(N_blocks[b]):
+                _, _, contact_angles, *_ = calculate_observables(i * blocksizes[b], (i+1) * blocksizes[b])
+                block_means[i] = np.mean(contact_angles)
+                progress_bar.update(progress_bar_child_task, advance=1)
+            contact_angle_block_means[b] = np.mean(block_means)
+            contact_angle_block_vars[b] = np.var(block_means)
+            progress_bar.remove_task(progress_bar_child_task)
+            progress_bar.update(progress_bar_parent_task, advance=1)
+        progress_bar.stop()
+        console.print(f'Computed block averages in [green]{elapsed_time(time_start_1)}[/green].')
+
+        blocksizes = np.array(blocksizes)
+        contact_angle_block_means = np.array(contact_angle_block_means)
+        contact_angle_block_vars = np.array(contact_angle_block_vars)
+        stat_inefficiencies = blocksizes * contact_angle_block_vars / contact_angle_inst_var
+        idx = np.argpartition(stat_inefficiencies, 23)[23]
+
+        fig, ax = plt.subplots(1, 2)
+        fig.set_size_inches(10, 5)
+        ax[0].plot(blocksizes, stat_inefficiencies, 'b.')
+        ax[0].plot((blocksizes[idx],), (stat_inefficiencies[idx],), 'r.')
+        ax[0].set_xlabel('Blocksize')
+        ax[0].set_ylabel('Statistical inefficiency')
+        ax[0].set_title('Statistical inefficiency against blocksize')
+        ax[1].errorbar(blocksizes, contact_angle_block_means,
+                       yerr=np.sqrt(contact_angle_block_vars / (N_blocks - 1.0)), fmt='b.')
+        ax[1].errorbar((blocksizes[idx],), (contact_angle_block_means[idx],),
+                       yerr=(np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1.0)),), fmt='r.')
+        ax[1].set_xlabel('Blocksize')
+        ax[1].set_ylabel(r'$\langle\theta\rangle_{b}\,(\degree)$')
+        ax[1].set_title('Block-averaged contact angle against blocksize')
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(args.output_dir, 'blocksizes.png'), dpi=(3*fig.dpi),
+                    bbox_inches='tight', pad_inches=0.05)
+
+        log_file.write('---------------------------------------------\n')
+        log_file.write(' Block-averaging of time-averaged interfaces\n')
+        log_file.write('---------------------------------------------\n\n')
+        log_file.write(f'Blocksize = {blocksizes[idx]} [frames]\n')
+        log_file.write(f'Number of blocks = {N_blocks[idx]}\n\n')
+        log_file.write(f'Contact angle, mean of block means = {contact_angle_block_means[idx]} [deg]\n')
+        log_file.write(f'Uncertainty = {np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1))} [deg]\n\n')
+        
     #----------------------------------------------------------------------------------------------
     # End of program
 
