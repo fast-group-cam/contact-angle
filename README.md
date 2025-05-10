@@ -1,103 +1,59 @@
-# droplet-graphene-analysis
+# contact-angle/droplet-graphene-analysis
 
-A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python, and only requires `numpy`, `scipy`, `matplotlib`, and `ase` (which are automatically included as package dependencies). To use this package:
+A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python. To use this package and install its dependencies:
 
 1. Create a Python virtual environment and activate it;
 2. Install this package by running `pip install .` in the repository directory.
 
-Afterwards, any of the analysis scripts can be run from the command line as `python /path/to/repo/contact_angle/scripts/<script-name.py> [inputs]`. The module `contact_angle.util` can also be imported directly into Python scripts, for a direct low-level interface to the methods.
+Afterwards, any of the analysis scripts can be run as `python /path/to/repo/droplet_graphene_analysis/scripts/<script_name.py> [inputs]`, or directly from the command line as just `<script_name> [inputs]`, while the virtual environment is active. The following scripts are available:
+
+- `contact_angle`: measures the contact angle of a water droplet on a graphene sheet from an NVT trajectory, with both instantaneous dynamics and time-averaged macroscopics.
+- `graphene_dynamics`: takes an NVT trajectory of a graphene sheet, and calculates certain observables with regards to local dynamics.
+- `make_droplet_movie`: takes an NVT trajectory of a water droplet on graphene, and renders a custom movie to a MP4 file. (N.B. This script requires that FFMPEG is installed and locally available, *separately* from this package's dependencies.)
+- `water_density`: measures the density of a water droplet on a graphene sheet from an NVT trajectory.
+
+Consult the help pages (e.g. `<script_name> --help`) for the input arguments of each script.
+
+The module `droplet_graphene_analysis.util` can also be imported directly into Python code, for a direct low-level interface to the methods.
 
 
-## scripts/contact-angle.py
+## Methods
 
-A python script, which measures the contact angle of a water droplet on a graphene sheet from a trajectory. This is done by finding the Willard-Chandler interface<sup>[1]</sup> for a small number of testpoints at the droplet's foot, and then calculating the direction of the best-fit plane of the interface. The script can be run by calling the following syntax (with optional arguments):
+### contact_angle
 
-```
-python contact-angle.py <filename> [--N_frames <N_FRAMES>] [--interval <INTERVAL>] [--N_azimuths <N_AZIMUTHS>] [--block-average] [--auto] [--blocksize <BLOCKSIZE>] [--units <UNITS>] [-o <OUTPUT_FILENAME>] [--no-save] [--no-display]
-```
+Interfacial definitions are based on the work of Willard and Chandler (2010)[^1]. In particular, the notion of an instantaneous coarse-grained density is used fairly heavily:
 
-The action of the script depends on the parameters:
+$$\phi(\mathbf{r}, t) \;=\; \sum_{i=1}^{N_{oxy}} \frac{1}{\left(2\pi\xi^2 \right)^{3/2}}\exp\left[\, -\frac{\left|\mathbf{r}-\mathbf{R}_i(t)\right|^2}{2\xi^2} \,\right]$$
 
-1. If `N_frames` is 1 (default), the contact angle is measured as an instantaneous 'snapshot' from the **last** frame of the file. The reported value is averaged over some number of azimuthal slices (specified by `N_azimuths`), and the reported uncertainty is the standard error of the mean. The program also generates a plot of the water molecules' number density distribution, and best-fit planes, for each azimuthal slice.
+where $\mathbf{R}_i(t)$ is the position of the $i$<sup>th</sup> oxygen atom at time $t$. This also gives a time-averaged coarse-grained density:
 
-2. If `N_frames` is greater than 1, and `block-average` is false (default), the contact angle is measured for each and every frame, and the reported value is averaged over all azimuthal slices across all frames (with reported uncertainty being the standard error of the mean). The program then generates a plot of the contact angles measured for each azimuthal slice for each frame. Note that the frames are sliced from the **start** of the file, with slicing interval specified by `--interval`.
+$$\langle\phi(\mathbf{r})\rangle_{t} \;=\; \lim_{\tau\to\infty} \frac{1}{\tau}\int_{0}^{\tau}\phi(\mathbf{r}, t') dt'.$$
 
-3. If `N_frames` is greater than 1, `block-average` is true, and `auto` is true or `b` is unspecified, the program will proceed as per mode #2; except that, instead of reporting a na&#239;ve mean across the frames, the program divides the sampled frames into consecutive 'blocks', and reports the mean of the median contact angles within each block. The program decides the optimal blocksize to use by testing a range of possible blocksizes, and selecting a blocksize which yields the 75<sup>th</sup> percentile highest statistical inefficiency<sup>[2]</sup> amongst the possible blocksizes.
+We expect that $\phi \approx 0.033 \AA^{-3}$ uniformly and constantly for bulk liquid water. The instantaneous interface, and time-averaged interface, of a collection of water molecules can thus be defined as the isosurfaces of the instantaneous and time-averaged coarse-grained densities respectively:
 
-4. If `N_frames` is greater than 1, `block-average` is true, `auto` is false (default), and `b` is specified, the program will proceed as per mode #3, but the reported value and uncertainty will be calculated using the user-specified blocksize instead of the automatically-determined blocksize.
+$$\Phi(t) \;=\; \left\{\,\mathbf{r}\; : \;\rho(\mathbf{r}, t)=\rho_{c}\,\right\} \; ; \qquad \Phi_{\langle t \rangle} \;=\; \left\{\,\mathbf{r}\; : \;\langle\rho(\mathbf{r})\rangle_{t} = \rho_{c}\,\right\}$$
 
-The reported value is printed directly to console, and the final graphical output is saved to disk in the working directory.
+where the cutoff density $\rho_c$ should be set as half of the bulk liquid value. The contact angle, whether instantaneous or time-averaged, can then be defined as the angle that the normal of the interface at the droplet foot (defined as the point of the droplet $7 \AA$ above the graphene surface) makes relative to the normal of the graphene surface.
 
-### Options
-
-- `<filename>` The path to the input file. The script simply calls `ase.io.read(...)` directly on the supplied filename, so the file format **is deduced automatically from the file extension**; as such, the file format and name must be natively compatible with [ASE's I/O formats](https://wiki.fysik.dtu.dk/ase/ase/io/io.html).
-
-- `--N_frames <N_FRAMES>` The number of frames to extract from the start of the input file, if greater than 1. The program will safely truncate sampling if the input file contains fewer frames than specified. If `N_frames` is set to 1 or left unspecified, the program will run in mode #1 and process the end of the input file instead.
-
-- `--interval <INTERVAL>` The slicing interval for the extraction of frames, if `N_frames` is greater than 1. Ignored if `N_frames` is 1.
-
-- `--N_azimuths <N_AZIMUTHS>` The number of azimuthal slices to analyze per frame. Note that, for each azimuthal slice, two azimuthal directions are sampled (in reciprocal pairs), so the total number of samples is twice of `N_azimuths`.
-
-- `--block-average` Enables block averaging, in the form of taking block medians for consecutive blocks of frames, in order to produce an unbiased estimate for a time-correlated series.
-
-- `--auto` Enforces the automatic determination of block size, overriding any user-specified `blocksize`, if `block-average` is turned on.
-
-- `--blocksize <BLOCKSIZE>` Disables the automatic determination of block size and enforces the user-specified block size, if `block-average` is turned on, unless `auto` was turned on.
-
-- `--units <UNITS>` A string specifying the length units of the coordinates in the input file (e.g. "fm"), if ASE cannot automatically recognize the length scale. The script works internally using Angstroms as the default length unit, hence if ASE does not recognize the length scale and `units` is unspecified then the raw data in the input file will be treated as being in Angstroms. **Warning:** this option works by manually rescaling lengths, hence `units` should not be specified if ASE is able to read them automatically, otherwise the conversion factor will be applied twice!
-
-- `-o <OUTPUT_FILENAME>` The output file to save the graphical output to; defaults to "output.png" within the working directory. Ignored if `no-save` is turned on.
-
-- `--no-save` Disables the saving of graphical output to the output file. Note that this is independent from `no-display`, e.g. it is possible to display the graphical output to the screen without saving it to file.
-
-- `--no-display` Disables the display of graphical output to the screen. Note that this is independent from `no-save`, e.g. it is possible to save the graphical output to file without displaying it.
+Block averaging, as described by Yang et al. (2004)[^2], is used to calculate unbiased uncertainty estimates.
 
 
-## scripts/make-droplet-movie.py
+### graphene_dynamics
 
-A Python script which takes a trajectory of a water droplet on graphene, displays it in a custom visualization, and renders the movie to a MP4 file using FFMPEG. Use as:
+The definitions of the local inclination angle, and its normalized infinite-time autocorrelation, were taken from Thiemann et al. (2025)[^3]. In particular, for a graphene sheet nominally aligned to the $xy$-plane, the local inclination angle $\theta(x, y)$ is defined as the angle that the best-fit plane to the carbon atoms within $4.5 \AA$ of $(x, y)$ makes relative to the $z$-axis. Then, the normalized autocorrelation function is defined as:
 
-```
-python make-droplet-movie.py <input_file> [-o <output_file>] [--index <index>]
-```
+$$\mathcal{C}_{\theta}(x, y; \tau) \;=\; \frac{\langle \theta(x, y; t + \tau)\theta(x, y; t) \rangle_{t}}{\langle \theta^2(x, y; t) \rangle_{t}}.$$
 
-The trajectory is assumed to be in the NVT ensemble with periodic boundary conditions (i.e. the simulation box lengths are fixed).
-
-
-## scripts/plot-graphene.py
-
-A Python script which takes a trajectory of a graphene sheet (which may or may not have a water droplet on it), calculates its local inclination angle autocorrelation function, and plots it to a file. Use as:
-
-```
-python plot-graphene.py <input_file> [-o <output_file>] [--max_tau <max_tau>] [--N_x <N_x>] [--N_y <N_y>] [--max_threads <max_threads>] [--no-display]
-```
-
-
-## util/droplet
-
-The module `contact_angle.util.droplet` provides a direct low-level interface to four methods regarding the water droplet and its Willard-Chandler interface<sup>[1]</sup>:
-
-- `center_coordinates`: reads an ASE Atoms object, and recenters the coordinates across periodic boundary conditions so that the graphene sheet is at the z = 0 plane, the droplet's CoM is on the x = y = 0 axis, and all atomic coordinates are within the first periodic image.
-
-- `coarse_grained_density`: calculates the coarse-grained density function defined by Willard and Chandler.
-
-- `coarse_grained_density_grad`: calculates the gradient of the coarse-grained density function.
-
-- `find_interface`: given a "search origin" and "search direction", finds the intersection of the Willard-Chandler interface with a ray extending from the origin in the supplied direction.
-
-Additionally, the `contact_angle.util.droplet.plot` submodule provides functions which plot a coarse-grained density distribution directly to a MatPlotLib axis.
-
-
-## util/graphene
-
-The module `contact_angle.util.graphene` provides several methods regarding the analysis of a graphene sheet.
+The infinite-time limit $\mathcal{C}_{\theta}(\tau\to\infty)$ is of interest for analyzing long-time dynamics, and can be calculated by fitting an exponential decay curve $\mathcal{C}_{\theta}(\tau)\approx(1-c)\exp(-k\tau)+c$.
 
 
 ## References
 
-<sup>[1]</sup> A.P. Willard, D. Chandler (2010). Instantaneous liquid interfaces. *J. Phys. Chem. B*, 114(5): 1954–1958. [DOI: 10.1021/jp909219k](https://doi.org/10.1021/jp909219k)
+[^1]: A.P. Willard, D. Chandler (2010). Instantaneous liquid interfaces. *J. Phys. Chem. B*, 114(5): 1954–1958. [DOI: 10.1021/jp909219k](https://doi.org/10.1021/jp909219k)
 
-<sup>[2]</sup> W. Yang, R. Bitetti-Putzer, M. Karplus (2004). Free energy simulations: Use of reverse cumulative averaging to determine the equilibrated region and the time required for convergence. *J. Chem. Phys.*, 120(6): 2618–2628. [DOI:10.1063/1.1638996](https://doi.org/10.1063/1.1638996)
+[^2]: W. Yang, R. Bitetti-Putzer, M. Karplus (2004). Free energy simulations: Use of reverse cumulative averaging to determine the equilibrated region and the time required for convergence. *J. Chem. Phys.*, 120(6): 2618–2628. [DOI:10.1063/1.1638996](https://doi.org/10.1063/1.1638996)
+
+[^3]: F.L. Thiemann, C. Scalliet, E.A. M&uuml;ller, A. Michaelides (2025). Defects induce phase transition from dynamic to static rippling in graphene. *Proc. Natl. Acad. Sci. U.S.A.*, 122(9): e2416932122. [DOI:10.1073/pnas.2416932122](https://doi.org/10.1073/pnas.2416932122)
 
 
 ## Author
