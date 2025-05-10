@@ -54,10 +54,11 @@ def main() -> None:
     # Script default parameters
 
     N_AZIMUTHS = 60       # Number of azimuthal directions to analyze per frame
-    Z_FOOT = 7.5          # Height of the droplet foot above the graphene sheet (in angstroms)
+    Z_FOOT = 7            # Height of the droplet foot above the graphene sheet (in angstroms)
     STEP_BACK = 10        # Step back per iteration of foot-finding algorithm (in angstroms)
     MAX_TAU = 25          # Maximum timescale to calculate autocorrelations (in number of frames)
     N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
+    N_BLOCKSIZES = 30     # Number of blocksizes to scan for automatic determination
 
     from droplet_graphene_analysis.util.graphene.angle import CUTOFF_RADIUS as CARBON_RADIUS
     CARBON_RADIUS_SQ = CARBON_RADIUS**2
@@ -92,6 +93,10 @@ def main() -> None:
     parser.add_argument('-b', '--blocksize', type=int, default=None, dest='blocksize',
                         help=('if --block-average is turned on, disables automatic block sizing ' +
                               'and enforces specified block size'))
+    parser.add_argument('--N_blocksizes', type=int, default=N_BLOCKSIZES, dest='N_blocksizes',
+                        help=('the number of different block sizes to try (for automatic ' +
+                              'block sizing) if --block-average is turned on but --blocksize is ' +
+                              'not specified'))
     parser.add_argument('-o', '--output', default='contact-angle', dest='output_dir',
                         help='output folder to save log and graphical outputs to')
     args = parser.parse_args()
@@ -108,6 +113,8 @@ def main() -> None:
         raise RuntimeError(f'Max tau ({args.max_tau}) must be at least 2.')
     if args.blocksize is not None and args.blocksize < 1:
         raise RuntimeError(f'Block size ({args.blocksize}) must be positive.')
+    if args.N_blocksizes < 2:
+        raise RuntimeError(f'Number of block sizes ({args.N_blocksize}) must be at least 2.')
 
     if not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
@@ -362,8 +369,6 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
 
-    #azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
-
     time_start_1 = time.time()
     with console.status('[green]Computing time-averaged interface...'):
 
@@ -575,22 +580,27 @@ def main() -> None:
 
     elif args.block_average and args.blocksize is None:
 
-        if N_frames < 150:
+        if N_frames < (5 * (args.N_blocksizes + 4)):
             raise RuntimeError('Too few frames in the trajectory for automatic blocksizing.')
-        blocksize_interval = max(N_frames // 150, 1)
-        blocksizes = [(i+1) * blocksize_interval for i in range(30)]
-        contact_angle_block_means = np.empty(30, dtype=float)
-        contact_angle_block_vars = np.empty(30, dtype=float)
-        N_blocks = np.empty(30, dtype=int)
+        max_N_blocks = N_frames // 5
+        attempted_N_blocks = np.linspace(5, max_N_blocks, args.N_blocksizes)
+        N_blocks = np.array([int(round(n)) for n in attempted_N_blocks], dtype=int)
+        N_blocks = np.unique(N_blocks)
+        blocksizes = np.array([N_frames // n for n in N_blocks])
+        blocksizes = np.unique(blocksizes)
+        N_blocks = np.array([N_frames // n for n in blocksizes])
+        N_blocksizes = N_blocks.shape[0]
+        contact_angle_block_means = np.empty(N_blocksizes, dtype=float)
+        contact_angle_block_vars = np.empty(N_blocksizes, dtype=float)
 
         time_start_1 = time.time()
         progress_bar = Progress(console=console, transient=True)
         progress_bar.start()
-        progress_bar_parent_task = progress_bar.add_task('Scanning blocksizes...', total=30)
-        for b in range(30):
-            N_blocks[b] = N_frames // blocksizes[b]
+        progress_bar_parent_task = progress_bar.add_task('Scanning blocksizes...', total=N_blocksizes)
+        for b in range(N_blocksizes):
             block_means = np.empty(N_blocks[b])
-            progress_bar_child_task = progress_bar.add_task(f'Computing block averages (b = {blocksizes[b]})...', total=N_blocks[b])
+            progress_bar_child_task = progress_bar.add_task('Computing block averages for b = ' +
+                                    f'{blocksizes[b]} ({b+1}/{N_blocksizes})...', total=N_blocks[b])
             for i in range(N_blocks[b]):
                 _, _, contact_angles, *_ = calculate_observables(i * blocksizes[b], (i+1) * blocksizes[b])
                 block_means[i] = np.mean(contact_angles)
@@ -602,11 +612,9 @@ def main() -> None:
         progress_bar.stop()
         console.print(f'Computed block averages in [green]{elapsed_time(time_start_1)}[/green].')
 
-        blocksizes = np.array(blocksizes)
-        contact_angle_block_means = np.array(contact_angle_block_means)
-        contact_angle_block_vars = np.array(contact_angle_block_vars)
         stat_inefficiencies = blocksizes * contact_angle_block_vars / contact_angle_inst_var
-        idx = np.argpartition(stat_inefficiencies, 23)[23]
+        idx = int(round(0.75 * N_blocksizes))
+        idx = np.argpartition(stat_inefficiencies, idx)[idx]
 
         fig, ax = plt.subplots(1, 2)
         fig.set_size_inches(10, 5)

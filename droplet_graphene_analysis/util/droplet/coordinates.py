@@ -47,6 +47,23 @@ def center_coordinates(
                       'not match!', RuntimeWarning)
         return (oxygens, carbons, hydrogens)
 
+    # If there are no carbons, return just the water (centred on unit cell)
+    if carbons.shape[0] == 0:
+        if N_water == 0:
+            warnings.warn('Input trajectory is empty!', RuntimeWarning)
+            return (oxygens, carbons, hydrogens)
+        CoM = np.mean(oxygens, axis=0)
+        oxygens -= CoM
+        hydrogens -= CoM
+        cell_p = np.array(cell_params[0:3])
+        for _ in range(3):
+            oxygens -= cell_p * np.round(oxygens / cell_p)
+            CoM = np.mean(oxygens, axis=0)
+            oxygens -= CoM
+            hydrogens -= CoM
+        hydrogens -= cell_p * np.round(hydrogens / cell_p)
+        return (oxygens, carbons, hydrogens)
+
     # Set middle of graphene sheet to z = 0
     cell_z = cell_params[2]
     carbons[:,2] -= cell_z * np.round(carbons[:,2] / cell_z)
@@ -77,7 +94,7 @@ def center_coordinates(
     #   - Calculate a new guess (wrt previous guess) using this constrained droplet
     #   - Repeat 3 times, to undo all possible boundary crossings
     cell_xy = np.array(cell_params[0:2])
-    for i in range(3):
+    for _ in range(3):
         oxygens[:,0:2] -= cell_xy * np.round(oxygens[:,0:2] / cell_xy)
         CoM = np.mean(oxygens, axis=0)
         CoM[2] = 0
