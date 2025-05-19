@@ -93,11 +93,11 @@ def main() -> None:
 
     scatterpoints[:, 0:NC] = carbons
     scattersizes[0:NC] = (2 * RADIUS_CARBON)**2
-    carbon_width = np.max(carbons[:,:,2]) - np.min(carbons[:,:,2])
+    carbon_width = max(np.max(carbons[:,:,2]) - np.min(carbons[:,:,2]), 1.0)
     z_devs = 0.6 * carbons[:,:,2] / carbon_width
-    scattercolors[:, 0:NC, 0] = 0.5 + z_devs
-    scattercolors[:, 0:NC, 1] = 0.5 - (np.square(z_devs) / 0.3)
-    scattercolors[:, 0:NC, 2] = 0.5 - z_devs
+    scattercolors[:, 0:NC, 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+    scattercolors[:, 0:NC, 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+    scattercolors[:, 0:NC, 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
 
     scatterpoints[:, NC:(NC + NH)] = hydrogens
     scattersizes[NC:(NC + NH)] = (2 * RADIUS_HYDROGEN)**2
