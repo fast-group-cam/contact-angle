@@ -66,11 +66,12 @@ def center_coordinates(
 
     # Set middle of graphene sheet to z = 0
     cell_z = cell_params[2]
-    carbons[:,2] -= cell_z * np.round(carbons[:,2] / cell_z)
-    mean_carbon_z_coord = np.mean(carbons[:,2])
-    carbons[:,2] -= mean_carbon_z_coord
-    oxygens[:,2] -= mean_carbon_z_coord
-    hydrogens[:,2] -= mean_carbon_z_coord
+    for _ in range(3):
+        carbons[:,2] -= cell_z * np.round(carbons[:,2] / cell_z)
+        mean_carbon_z_coord = np.mean(carbons[:,2])
+        carbons[:,2] -= mean_carbon_z_coord
+        oxygens[:,2] -= mean_carbon_z_coord
+        hydrogens[:,2] -= mean_carbon_z_coord
 
     # If there are no water molecules, return just the carbons (centred on unit cell)
     if N_water == 0:
