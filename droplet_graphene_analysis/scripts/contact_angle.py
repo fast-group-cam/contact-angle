@@ -43,7 +43,7 @@ from rich.console import Console
 from rich.progress import track, Progress
 from scipy.optimize import curve_fit
 from matplotlib.cm import ScalarMappable
-from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory, best_fit_sphere
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory, best_fit_axial_sphere
 from droplet_graphene_analysis.util.droplet import find_interface
 from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
 from droplet_graphene_analysis.util.graphene import generate_grid, smooth_sheet
@@ -127,6 +127,18 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Helper functions
 
+    def arcsin(x):
+        return np.arcsin(x) * 180 / np.pi
+    
+    def arccos(x):
+        return np.arccos(x) * 180 / np.pi
+    
+    def arctan(x):
+        return np.arctan(x) * 180 / np.pi
+    
+    def cot(x):
+        return -np.tan((x + 90.0) * np.pi / 180)
+
     def exp_curve(x, A, k, c):
         return A * np.exp(-k * x) + c
 
@@ -194,7 +206,7 @@ def main() -> None:
             normals.append(norm)
 
         return (np.array(interfaces), np.array(normals))
-
+    
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
@@ -231,13 +243,18 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Helper function for finding observables of interest across a range of frames
 
-    def calculate_observables(start_frame, end_frame):
+    def calculate_observables(start_frame, end_frame, sphere_fit = False):
+
+        results = argparse.Namespace()
 
         azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
         search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
         search_perp = np.c_[-np.sin(azi), np.cos(azi)]
         interfaces, normals = droplet_foot_interfaces(waters[start_frame:end_frame],
                                                       carbons[start_frame:end_frame], search_dirs)
+        results.interfaces = interfaces
+        results.normals = normals
+        results.foot_r = np.mean(np.linalg.norm(interfaces[:,0:2], axis=-1))
         
         if args.local:
             mean_sheet = np.mean(sheets[start_frame:end_frame], axis=0)
@@ -250,17 +267,59 @@ def main() -> None:
                 local_sheet_c[i] = np.mean(nearby, axis=0)
                 local_sheet_n[i] = np.linalg.svd(nearby - local_sheet_c[i], full_matrices=False)[2][-1]
                 local_sheet_n[i] /= np.linalg.norm(local_sheet_n[i]) * np.sign(local_sheet_n[i,2])
-                contact_angles[i] = np.arccos(np.dot(normals[i], local_sheet_n[i])) * 180 / np.pi
+                contact_angles[i] = arccos(np.dot(normals[i], local_sheet_n[i]))
+            results.mean_sheet = mean_sheet
+            results.local_sheet_c = local_sheet_c
+            results.local_sheet_n = local_sheet_n
         else:
-            contact_angles = np.arccos(np.dot(normals, (0, 0, 1))) * 180 / np.pi
+            contact_angles = arccos(np.dot(normals, (0, 0, 1)))
+        results.contact_angles = contact_angles
+        results.foot_r = np.mean(np.linalg.norm(interfaces[:,0:2], axis=-1) + (args.z_foot * cot(contact_angles)))
 
         proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
         ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
+        results.ooplane_angles = ooplane_angles
 
-        if args.local:
-            return (interfaces, normals, contact_angles, ooplane_angles,
-                    mean_sheet, local_sheet_c, local_sheet_n)
-        return (interfaces, normals, contact_angles, ooplane_angles)
+        if sphere_fit:
+            CoM = np.mean(waters[start_frame:end_frame], axis=(0,1))
+            phi = 2 * np.pi * np.random.random(N_SPHERE_PTS)
+            cosine_theta = np.random.random(N_SPHERE_PTS)
+            sine_theta = np.sqrt(1.0 - (cosine_theta**2))
+            axes = np.c_[np.cos(phi) * sine_theta, np.sin(phi) * sine_theta, cosine_theta]
+            sphere_pts = np.empty((N_SPHERE_PTS, 3))
+            for i in range(N_SPHERE_PTS):
+                sphere_pts[i,:] = find_interface(waters[start_frame:end_frame], CoM, axes[i])
+            sphere_r, sphere_z = best_fit_axial_sphere(sphere_pts)
+            if args.local:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('error')
+                    try:
+                        sphere_a = np.sqrt((sphere_r**2) - (sphere_z**2))
+                        sheet_radials = np.sqrt(np.sum(sheet_gridpts**2, axis=-1))
+                        for _ in range(5):
+                            nearby_idx = np.abs(sheet_radials - sphere_a) < CARBON_RADIUS
+                            intersection_z = np.mean(mean_sheet[nearby_idx])
+                            sphere_a = np.sqrt((sphere_r**2) - ((sphere_z - intersection_z)**2))
+                        nearby_idx = np.abs(sheet_radials - sphere_a) < CARBON_RADIUS
+                        intersection_z = np.mean(mean_sheet[nearby_idx])
+                        sphere_angle = 90.0 + arcsin((sphere_z - intersection_z) / sphere_r)
+                        nearby_grad = np.polyfit(sheet_radials[nearby_idx], mean_sheet[nearby_idx], 1)[0]
+                        sphere_angle += arctan(nearby_grad) * 180.0 / np.pi
+                    except RuntimeWarning:
+                        sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
+            else:
+                if np.abs(sphere_z) < sphere_r:
+                    sphere_a = np.sqrt((sphere_r**2) - (sphere_z**2))
+                    sphere_angle = 90.0 + arcsin(sphere_z / sphere_r)
+                else:
+                    sphere_a = 0.0
+                    sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
+            results.sphere_r = sphere_r
+            results.sphere_z = sphere_z
+            results.sphere_a = sphere_a
+            results.sphere_angle = sphere_angle
+        
+        return results
 
     #----------------------------------------------------------------------------------------------
     # Calculate instantaneous interfaces for every frame and measure autocorrelations etc.
@@ -270,7 +329,9 @@ def main() -> None:
 
     time_start_1 = time.time()
     for f in progress_bar_iter(N_frames, 'Computing instantaneous interfaces...'):
-        _, _, contact_angles[f], ooplane_angles[f], *_ = calculate_observables(f, f+1)
+        results = calculate_observables(f, f+1, sphere_fit=False)
+        contact_angles[f] = results.contact_angles
+        ooplane_angles[f] = results.ooplane_angles
     
     console.print(f'Computed instantaneous interfaces in [green]{elapsed_time(time_start_1)}[/green].')
     
@@ -371,49 +432,10 @@ def main() -> None:
 
     time_start_1 = time.time()
     with console.status('[green]Computing time-averaged interface...'):
+        CoM_z = np.mean(waters[:,:,2])
+        results = calculate_observables(0, N_frames, sphere_fit=True)
 
-        if args.local:
-            (interfaces, normals, contact_angles, ooplane_angles, mean_sheet, local_sheet_c,
-             local_sheet_n) = calculate_observables(0, N_frames)
-        else:
-            interfaces, normals, contact_angles, ooplane_angles = calculate_observables(0, N_frames)
-
-        cylinder_r, cylinder_c = best_fit_sphere(interfaces, d=2)
-
-        CoM = np.mean(waters, axis=(0,1))
-        phi = 2 * np.pi * np.random.random(N_SPHERE_PTS)
-        cosine_theta = np.random.random(N_SPHERE_PTS)
-        sine_theta = np.sqrt(1.0 - (cosine_theta**2))
-        axes = np.c_[np.cos(phi) * sine_theta, np.sin(phi) * sine_theta, cosine_theta]
-        sphere_pts = np.empty((N_SPHERE_PTS, 3))
-        for i in range(N_SPHERE_PTS):
-            sphere_pts[i,:] = find_interface(waters, CoM, axes[i])
-        sphere_r, sphere_c = best_fit_sphere(sphere_pts, d=3)
-        if args.local:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('error')
-                try:
-                    intersection_r = np.sqrt((sphere_r**2) - (sphere_c[2]**2))
-                    sheet_radials = np.sqrt(np.sum(sheet_gridpts**2, axis=-1))
-                    for _ in range(5):
-                        nearby_idx = np.abs(sheet_radials - intersection_r) < CARBON_RADIUS
-                        intersection_z = np.mean(mean_sheet[nearby_idx])
-                        intersection_r = np.sqrt((sphere_r**2) - ((sphere_c[2] - intersection_z)**2))
-                    nearby_idx = np.abs(sheet_radials - intersection_r) < CARBON_RADIUS
-                    intersection_z = np.mean(mean_sheet[nearby_idx])
-                    sphere_angle = 90.0 + (np.arcsin((sphere_c[2] - intersection_z) / sphere_r) * 180.0 / np.pi)
-                    nearby_grad = np.polyfit(sheet_radials[nearby_idx], mean_sheet[nearby_idx], 1)[0]
-                    sphere_angle += np.arctan(nearby_grad) * 180.0 / np.pi
-                except RuntimeWarning:
-                    sphere_angle = (180.0 if sphere_c[2] > 0.0 else 0.0)
-        else:
-            if np.abs(sphere_c[2]) < sphere_r:
-                sphere_angle = 90.0 + (np.arcsin(sphere_c[2] / sphere_r) * 180.0 / np.pi)
-            else:
-                sphere_angle = (180.0 if sphere_c[2] > 0.0 else 0.0)
-
-    console.print('Computed time-averaged interface in ' +
-                  f'[green]{elapsed_time(time_start_1)}[/green].')
+    console.print(f'Computed time-averaged interface in [green]{elapsed_time(time_start_1)}[/green].')
     
     fig, ax = plt.subplots(2, 3)
     fig.set_size_inches(15, 5)
@@ -434,23 +456,23 @@ def main() -> None:
             
         for k in (0, int(N_azi / 2)):
             if args.local:
-                rot_carbon_c = rot_matrix @ local_sheet_c[idx + k]
-                rot_carbon_n = rot_matrix @ local_sheet_n[idx + k]
+                rot_carbon_c = rot_matrix @ results.local_sheet_c[idx + k]
+                rot_carbon_n = rot_matrix @ results.local_sheet_n[idx + k]
                 a_x = rot_carbon_c[0] - CARBON_RADIUS
                 a_z = rot_carbon_c[2] + (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
                 b_x = rot_carbon_c[0] + CARBON_RADIUS
                 b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
                 ax[i // 3][i % 3].plot((a_x, b_x), (a_z, b_z), 'k-')
-            rot_inter = rot_matrix @ interfaces[idx + k]
-            rot_norm = rot_matrix @ normals[idx + k]
+            rot_inter = rot_matrix @ results.interfaces[idx + k]
+            rot_norm = rot_matrix @ results.normals[idx + k]
             a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
             b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
             ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
-        ax[i // 3][i % 3].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
+        ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
         ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
-                                            f'{contact_angles[idx + (N_azi // 2)]:.1f}' +
+                                            f'{results.contact_angles[idx + (N_azi // 2)]:.1f}' +
                                             r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
-                                            f'{contact_angles[idx]:.1f}' + r'\degree$'),
+                                            f'{results.contact_angles[idx]:.1f}' + r'\degree$'),
                                             ha='left', va='top',
                                             transform=ax[i // 3][i % 3].transAxes)
 
@@ -470,9 +492,9 @@ def main() -> None:
         fig, ax = plt.subplots()
         fig.set_size_inches(6, 6)
 
-        max_r_coord = 1.5 * cylinder_r
+        max_r_coord = 1.5 * results.foot_r
         min_z_coord = np.min(carbons[:,:,2])
-        max_z_coord = 1.5 * (sphere_c[2] + sphere_r)
+        max_z_coord = 1.5 * (results.sphere_z + results.sphere_r)
         r_bin_edges = np.linspace(0.0, max_r_coord, 81)
         z_bin_edges = np.linspace(min_z_coord, max_z_coord, 81)
         r_bin_centers = 0.5 * (r_bin_edges[1:] + r_bin_edges[:-1])
@@ -520,10 +542,10 @@ def main() -> None:
         ax.fill_between(r_bin_centers, z_mean - z_stdev, z_mean + z_stdev, color=(0.6, 0.6, 0.6, 0.25))
         ax.plot(r_bin_centers, z_mean, '-', color=(0.6, 0.6, 0.6))
 
-        max_phi = np.arccos(np.clip(-sphere_c[2] / sphere_r, -1.0, 1.0))
+        max_phi = np.arccos(np.clip(-results.sphere_z / results.sphere_r, -1.0, 1.0))
         phi = np.linspace(0, max_phi, 100)
-        ax.plot(sphere_r * np.sin(phi), sphere_c[2] + (sphere_r * np.cos(phi)), 'g-')
-        ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{sphere_angle:.1f}' + r'\degree$'),
+        ax.plot(results.sphere_r * np.sin(phi), results.sphere_z + (results.sphere_r * np.cos(phi)), 'g-')
+        ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{results.sphere_angle:.1f}' + r'\degree$'),
                 ha='right', va='top', transform=ax.transAxes)
         ax.set_xlabel(r'r ($\AA$)')
         ax.set_ylabel(r'z ($\AA$)')
@@ -537,19 +559,18 @@ def main() -> None:
     log_file.write('-------------------------\n')
     log_file.write(' Time-averaged interface\n')
     log_file.write('-------------------------\n\n')
-    log_file.write(f'Mean contact angle = {np.mean(contact_angles)} [deg]\n')
-    log_file.write(f'Median contact angle = {np.median(contact_angles)} [deg]\n')
-    log_file.write(f'Contact angle stdev = {np.std(contact_angles)} [deg]\n\n')
-    log_file.write(f'Mean out-of-plane angle = {np.mean(ooplane_angles)} [deg]\n')
-    log_file.write(f'Median out-of-plane angle = {np.median(ooplane_angles)} [deg]\n')
-    log_file.write(f'Out-of-plane angle stdev = {np.std(ooplane_angles)} [deg]\n\n')
-    log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
-    log_file.write(f'Best-fit edge circle center (x, y) = ({cylinder_c[0]}, {cylinder_c[1]}) [A]\n')
-    log_file.write(f'Best-fit edge circle radius = {cylinder_r} [A]\n\n')
-    log_file.write(f'Best-fit sphere center (x, y) = ({sphere_c[0]}, {sphere_c[1]}) [A]\n')
-    log_file.write(f'Best-fit sphere z-height = {sphere_c[2]} [A]\n')
-    log_file.write(f'Best-fit sphere radius = {sphere_r} [A]\n')
-    log_file.write(f'Best-fit sphere contact angle = {sphere_angle} [deg]\n\n')
+    log_file.write(f'Mean contact angle = {np.mean(results.contact_angles)} [deg]\n')
+    log_file.write(f'Median contact angle = {np.median(results.contact_angles)} [deg]\n')
+    log_file.write(f'Contact angle stdev = {np.std(results.contact_angles)} [deg]\n\n')
+    log_file.write(f'Mean out-of-plane angle = {np.mean(results.ooplane_angles)} [deg]\n')
+    log_file.write(f'Median out-of-plane angle = {np.median(results.ooplane_angles)} [deg]\n')
+    log_file.write(f'Out-of-plane angle stdev = {np.std(results.ooplane_angles)} [deg]\n\n')
+    log_file.write(f'Center-of-mass z-height = {CoM_z} [A]\n')
+    log_file.write(f'Best-fit interfacial circular radius = {results.foot_r} [A]\n\n')
+    log_file.write(f'Best-fit sphere z-height = {results.sphere_z} [A]\n')
+    log_file.write(f'Best-fit sphere radius = {results.sphere_r} [A]\n')
+    log_file.write(f'Best-fit sphere contact angle = {results.sphere_angle} [deg]\n')
+    log_file.write(f'Best-fit sphere sheet-intersecting radius = {results.sphere_a} [A]\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Calculate block-averages of time-averaged interfaces (for user-specified blocksize)
@@ -560,11 +581,17 @@ def main() -> None:
         if N_blocks < 2:
             raise RuntimeError(f'User-specified block size ({args.blocksize}) too large.')
         contact_angle_block_means = np.empty(N_blocks)
+        foot_r_block_means = np.empty(N_blocks)
+        sphere_angle_block_means = np.empty(N_blocks)
+        sphere_a_block_means = np.empty(N_blocks)
 
         time_start_1 = time.time()
         for i in progress_bar_iter(N_blocks, 'Computing block averages...'):
-            _, _, contact_angles, *_ = calculate_observables(i * args.blocksize, (i+1) * args.blocksize)
-            contact_angle_block_means[i] = np.mean(contact_angles)
+            results = calculate_observables(i * args.blocksize, (i+1) * args.blocksize, sphere_fit=True)
+            contact_angle_block_means[i] = np.mean(results.contact_angles)
+            foot_r_block_means[i] = results.foot_r
+            sphere_angle_block_means[i] = results.sphere_angle
+            sphere_a_block_means[i] = results.sphere_a
         console.print(f'Computed block averages in [green]{elapsed_time(time_start_1)}[/green].')
 
         log_file.write('---------------------------------------------\n')
@@ -573,7 +600,13 @@ def main() -> None:
         log_file.write(f'Blocksize (user-specified) = {args.blocksize} [frames]\n')
         log_file.write(f'Number of blocks = {N_blocks}\n\n')
         log_file.write(f'Contact angle, mean of block means = {np.mean(contact_angle_block_means)} [deg]\n')
-        log_file.write(f'Uncertainty = {np.std(contact_angle_block_means) / np.sqrt(N_blocks - 1)} [deg]\n\n')
+        log_file.write(f'Contact angle, uncertainty = {np.std(contact_angle_block_means) / np.sqrt(N_blocks - 1)} [deg]\n\n')
+        log_file.write(f'Foot edge radius, mean of block means = {np.mean(foot_r_block_means)} [A]\n')
+        log_file.write(f'Foot edge radius, uncertainty = {np.std(foot_r_block_means) / np.sqrt(N_blocks - 1)} [A]\n\n')
+        log_file.write(f'Best-fit sphere contact angle, mean of block means = {np.mean(sphere_angle_block_means)} [deg]\n')
+        log_file.write(f'Best-fit sphere contact angle, uncertainty = {np.std(sphere_angle_block_means) / np.sqrt(N_blocks - 1)} [deg]\n\n')
+        log_file.write(f'Best-fit sphere edge radius, mean of block means = {np.mean(sphere_a_block_means)} [A]\n')
+        log_file.write(f'Best-fit sphere edge radius, uncertainty = {np.std(sphere_a_block_means) / np.sqrt(N_blocks - 1)} [A]\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Calculate block-averages of time-averaged interfaces (for automatic blocksizing)
@@ -592,6 +625,12 @@ def main() -> None:
         N_blocksizes = N_blocks.shape[0]
         contact_angle_block_means = np.empty(N_blocksizes, dtype=float)
         contact_angle_block_vars = np.empty(N_blocksizes, dtype=float)
+        foot_r_block_means = np.empty(N_blocksizes, dtype=float)
+        foot_r_block_vars = np.empty(N_blocksizes, dtype=float)
+        sphere_angle_block_means = np.empty(N_blocksizes, dtype=float)
+        sphere_angle_block_vars = np.empty(N_blocksizes, dtype=float)
+        sphere_a_block_means = np.empty(N_blocksizes, dtype=float)
+        sphere_a_block_vars = np.empty(N_blocksizes, dtype=float)
 
         time_start_1 = time.time()
         progress_bar = Progress(console=console, transient=True)
@@ -599,14 +638,26 @@ def main() -> None:
         progress_bar_parent_task = progress_bar.add_task('Scanning blocksizes...', total=N_blocksizes)
         for b in range(N_blocksizes):
             block_means = np.empty(N_blocks[b])
+            r_block_means = np.empty(N_blocks[b])
+            sph_ang_block_means = np.empty(N_blocks[b])
+            sph_r_block_means = np.empty(N_blocks[b])
             progress_bar_child_task = progress_bar.add_task('Computing block averages for b = ' +
                                     f'{blocksizes[b]} ({b+1}/{N_blocksizes})...', total=N_blocks[b])
             for i in range(N_blocks[b]):
-                _, _, contact_angles, *_ = calculate_observables(i * blocksizes[b], (i+1) * blocksizes[b])
-                block_means[i] = np.mean(contact_angles)
+                results = calculate_observables(i * blocksizes[b], (i+1) * blocksizes[b], sphere_fit=True)
+                block_means[i] = np.mean(results.contact_angles)
+                r_block_means[i] = results.foot_r
+                sph_ang_block_means[i] = results.sphere_angle
+                sph_r_block_means[i] = results.sphere_a
                 progress_bar.update(progress_bar_child_task, advance=1)
             contact_angle_block_means[b] = np.mean(block_means)
             contact_angle_block_vars[b] = np.var(block_means)
+            foot_r_block_means[b] = np.mean(r_block_means)
+            foot_r_block_vars[b] = np.var(r_block_means)
+            sphere_angle_block_means[b] = np.mean(sph_ang_block_means)
+            sphere_angle_block_vars[b] = np.var(sph_ang_block_means)
+            sphere_a_block_means[b] = np.mean(sph_r_block_means)
+            sphere_a_block_vars[b] = np.var(sph_r_block_means)
             progress_bar.remove_task(progress_bar_child_task)
             progress_bar.update(progress_bar_parent_task, advance=1)
         progress_bar.stop()
@@ -641,7 +692,13 @@ def main() -> None:
         log_file.write(f'Blocksize = {blocksizes[idx]} [frames]\n')
         log_file.write(f'Number of blocks = {N_blocks[idx]}\n\n')
         log_file.write(f'Contact angle, mean of block means = {contact_angle_block_means[idx]} [deg]\n')
-        log_file.write(f'Uncertainty = {np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1))} [deg]\n\n')
+        log_file.write(f'Contact angle, uncertainty = {np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1))} [deg]\n\n')
+        log_file.write(f'Foot edge radius, mean of block means = {foot_r_block_means[idx]} [A]\n')
+        log_file.write(f'Foot edge radius, uncertainty = {np.sqrt(foot_r_block_vars[idx] / (N_blocks[idx] - 1))} [A]\n\n')
+        log_file.write(f'Best-fit sphere contact angle, mean of block means = {sphere_angle_block_means[idx]} [deg]\n')
+        log_file.write(f'Best-fit sphere contact angle, uncertainty = {np.sqrt(sphere_angle_block_vars[idx] / np.sqrt(N_blocks[idx] - 1))} [deg]\n\n')
+        log_file.write(f'Best-fit sphere edge radius, mean of block means = {sphere_a_block_means[idx]} [A]\n')
+        log_file.write(f'Best-fit sphere edge radius, uncertainty = {np.sqrt(sphere_a_block_vars[idx] / np.sqrt(N_blocks[idx] - 1))} [A]\n\n')
         
     #----------------------------------------------------------------------------------------------
     # End of program
