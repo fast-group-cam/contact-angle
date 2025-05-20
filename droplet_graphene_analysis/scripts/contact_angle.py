@@ -304,7 +304,7 @@ def main() -> None:
                         intersection_z = np.mean(mean_sheet[nearby_idx])
                         sphere_angle = 90.0 + arcsin((sphere_z - intersection_z) / sphere_r)
                         nearby_grad = np.polyfit(sheet_radials[nearby_idx], mean_sheet[nearby_idx], 1)[0]
-                        sphere_angle += arctan(nearby_grad) * 180.0 / np.pi
+                        sphere_angle += arctan(nearby_grad)
                     except RuntimeWarning:
                         sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
             else:
@@ -613,15 +613,11 @@ def main() -> None:
 
     elif args.block_average and args.blocksize is None:
 
-        if N_frames < (5 * (args.N_blocksizes + 4)):
+        if N_frames < (10 * (args.N_blocksizes + 2)):
             raise RuntimeError('Too few frames in the trajectory for automatic blocksizing.')
-        max_N_blocks = N_frames // 5
-        attempted_N_blocks = np.linspace(5, max_N_blocks, args.N_blocksizes)
-        N_blocks = np.array([int(round(n)) for n in attempted_N_blocks], dtype=int)
-        N_blocks = np.unique(N_blocks)
-        blocksizes = np.array([N_frames // n for n in N_blocks])
-        blocksizes = np.unique(blocksizes)
-        N_blocks = np.array([N_frames // n for n in blocksizes])
+        N_blocks = np.array([n + 3 for n in range(args.N_blocksizes)], dtype=int)
+        blocksizes = np.unique(np.array([N_frames // n for n in N_blocks], dtype=int))
+        N_blocks = np.array([N_frames // n for n in blocksizes], dtype=int)
         N_blocksizes = N_blocks.shape[0]
         contact_angle_block_means = np.empty(N_blocksizes, dtype=float)
         contact_angle_block_vars = np.empty(N_blocksizes, dtype=float)
