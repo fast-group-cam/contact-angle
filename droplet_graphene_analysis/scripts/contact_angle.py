@@ -54,7 +54,7 @@ def main() -> None:
     # Script default parameters
 
     N_AZIMUTHS = 60       # Number of azimuthal directions to analyze per frame
-    Z_FOOT = 7            # Height of the droplet foot above the graphene sheet (in angstroms)
+    Z_FOOT = 5            # Height of the droplet foot (in angstroms)
     STEP_BACK = 10        # Step back per iteration of foot-finding algorithm (in angstroms)
     MAX_TAU = 25          # Maximum timescale to calculate autocorrelations (in number of frames)
     N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
@@ -173,7 +173,7 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Helper function for finding interface at droplet foot
 
-    def droplet_foot_interfaces(waters, carbons, search_directions):
+    def droplet_foot_interfaces(waters, carbons, search_directions, adj_z_foot):
 
         # Calculate droplet CoM and floor, and flatten carbons array
         CoM = np.mean(waters, axis=(0, 1))
@@ -194,14 +194,14 @@ def main() -> None:
             # Second guess of interface (and repeat refinement)
             step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
             inter = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                            local_floor + args.z_foot), search_dir)
+                                            local_floor + adj_z_foot), search_dir)
             nearby_Cs = graphene[np.sum((graphene[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
             local_floor = np.mean(nearby_Cs[:,2])
 
             # Third and final guess of interface
             step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
             inter, norm = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                                  local_floor + args.z_foot), search_dir, calc_normal=True)
+                                                  local_floor + adj_z_foot), search_dir, calc_normal=True)
             interfaces.append(inter)
             normals.append(norm)
 
@@ -223,22 +223,43 @@ def main() -> None:
                   f'[green]{elapsed_time(time_start_0)}[/green].')
 
     #----------------------------------------------------------------------------------------------
-    # Calculate smoothened carbon sheets for every frame (if --local option is turned on)
+    # Calculate smoothened carbon sheets for every frame (if --local option is turned on); also
+    # calculate nominal interfacial separation for solid-liquid interface
 
+    time_start_1 = time.time()
     if args.local:
         sheet_res_x = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
         sheet_res_y = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
         sheet_gridpts = generate_grid((sheet_res_x, sheet_res_y), cell_params[0:2])
         sheets = np.empty((N_frames, sheet_res_x, sheet_res_y), dtype=float)
-        time_start_1 = time.time()
         for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
             sheets[f] = smooth_sheet(carbons[f], cell_params[0:2], (sheet_res_x, sheet_res_y))
-        console.print(f'Processed graphene sheet in [green]{elapsed_time(time_start_1)}[/green].')
+        central_sheet_height = np.mean(sheets, axis=0)[sheet_res_x // 2, sheet_res_y // 2]
+    else:
+        z = np.empty((N_frames,), dtype=float)
+        for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
+            z[f] = smooth_sheet(carbons[f], cell_params[0:2], 1)[0, 0]
+        central_sheet_height = np.mean(z)
+    CoM_z = np.mean(waters[:,:,2])
+    droplet_roof = find_interface(waters, (0, 0, CoM_z), (0, 0, 1))[2]
+    droplet_floor = find_interface(waters, (0, 0, CoM_z), (0, 0, -1))[2]
+    adj_z_foot = args.z_foot + droplet_floor - central_sheet_height
+    console.print(f'Processed graphene sheet in [green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Create output log file
 
     log_file = open(os.path.join(args.output_dir, 'log.txt'), 'w', encoding='utf-8')
+    log_file.write('-------------------------\n')
+    log_file.write(' General\n')
+    log_file.write('-------------------------\n\n')
+    log_file.write(f'No. of frames = {N_frames}\n')
+    log_file.write(f'No. of water molecules = {N_water}\n\n')
+    log_file.write(f'Droplet roof = {droplet_roof} [A]\n')
+    log_file.write(f'Droplet floor = {droplet_floor} [A]\n')
+    log_file.write(f'Graphene sheet z at origin = {central_sheet_height} [A]\n\n')
+    log_file.write(f'Droplet height = {droplet_roof - droplet_floor} [A]\n')
+    log_file.write(f'Nominal interfacial separation = {droplet_floor - central_sheet_height} [A]\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Helper function for finding observables of interest across a range of frames
@@ -251,7 +272,8 @@ def main() -> None:
         search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
         search_perp = np.c_[-np.sin(azi), np.cos(azi)]
         interfaces, normals = droplet_foot_interfaces(waters[start_frame:end_frame],
-                                                      carbons[start_frame:end_frame], search_dirs)
+                                                      carbons[start_frame:end_frame],
+                                                      search_dirs, adj_z_foot)
         results.interfaces = interfaces
         results.normals = normals
         results.foot_r = np.mean(np.linalg.norm(interfaces[:,0:2], axis=-1))
@@ -432,7 +454,6 @@ def main() -> None:
 
     time_start_1 = time.time()
     with console.status('[green]Computing time-averaged interface...'):
-        CoM_z = np.mean(waters[:,:,2])
         results = calculate_observables(0, N_frames, sphere_fit=True)
 
     console.print(f'Computed time-averaged interface in [green]{elapsed_time(time_start_1)}[/green].')
@@ -578,7 +599,7 @@ def main() -> None:
     if args.block_average and args.blocksize is not None:
 
         N_blocks = N_frames // args.blocksize
-        if N_blocks < 2:
+        if N_blocks < 1:
             raise RuntimeError(f'User-specified block size ({args.blocksize}) too large.')
         contact_angle_block_means = np.empty(N_blocks)
         foot_r_block_means = np.empty(N_blocks)
@@ -659,7 +680,8 @@ def main() -> None:
         progress_bar.stop()
         console.print(f'Computed block averages in [green]{elapsed_time(time_start_1)}[/green].')
 
-        stat_inefficiencies = blocksizes * contact_angle_block_vars / contact_angle_inst_var
+        #stat_inefficiencies = blocksizes * contact_angle_block_vars / contact_angle_inst_var
+        stat_inefficiencies = blocksizes * sphere_angle_block_vars / np.min(sphere_angle_block_vars)
         idx = int(round(0.75 * N_blocksizes))
         idx = np.argpartition(stat_inefficiencies, idx)[idx]
 
