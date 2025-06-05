@@ -262,9 +262,8 @@ def find_interface(
     Warns
     -----
     RuntimeWarning
-        If there are no water molecules within the sliced subset, or if the bulk liquid region or
-        exterior region could not be identified along the search ray; in which case the fallback
-        return value of `inter` is `search_start`, and `norm` is `axis`.
+        If there are no water molecules within the sliced subset; in which case the fallback return
+        value of `inter` is `search_start`, and `norm` is `axis`.
 
     Notes
     -----
@@ -323,23 +322,9 @@ def find_interface(
     else:
         z_ceil = max_dist
 
-    # Initial coarse search to determine maximum and minimum densities
-    testpoints = np.linspace(0, z_ceil, 30)
-    testpoints = testpoints[:, np.newaxis] * axis[np.newaxis, :]
-    densities = coarse_grained_density(testpoints, sliced, coarse_grain_length=coarse_grain_length) / N_frames
-
-    if np.max(densities) < cutoff_density:
-        warnings.warn('System density lower than cutoff density everywhere, could not identify ' +
-                      'any liquid region', RuntimeWarning)
-        return ((search_start, axis) if calc_normal else search_start)
-    if np.min(densities) > cutoff_density:
-        warnings.warn('System density higher than cutoff density everywhere, could not identify ' +
-                      'any exterior region', RuntimeWarning)
-        return ((search_start, axis) if calc_normal else search_start)
-
     # Perform binary search to find the distance of the interface from the origin
     if reverse_search:
-        lower = np.dot(testpoints[np.argmin(densities)], axis)
+        lower = 0.0
         upper = z_ceil
         result = (lower + upper) / 2.0
         while (upper - lower) > tol:
@@ -351,7 +336,7 @@ def find_interface(
                 lower = result
             result = (lower + upper) / 2.0
     else:
-        lower = np.dot(testpoints[np.argmax(densities)], axis)
+        lower = 0.0
         upper = z_ceil
         result = (lower + upper) / 2.0
         while (upper - lower) > tol:
