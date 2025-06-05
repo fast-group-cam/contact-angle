@@ -99,6 +99,8 @@ def main() -> None:
                               'not specified'))
     parser.add_argument('-o', '--output', default='contact-angle', dest='output_dir',
                         help='output folder to save log and graphical outputs to')
+    parser.add_argument('--no-graphics', action='store_true', dest='no_graphics',
+                        help='disables rendering of graphics (and speeds up the script)')
     args = parser.parse_args()
 
     for file in args.input_file:
@@ -395,43 +397,45 @@ def main() -> None:
 
     console.print(f'Computed correlations in [green]{elapsed_time(time_start_1)}[/green].')
 
-    fig = plt.figure(figsize=(14, 7), layout='constrained')
-    subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
-    plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), contact_angles,
-                                  'Instantaneous contact angles', r'$\theta(t,\varphi)$')
-    ax = subfigs[1].subplots(2, 1)
-    tau = np.linspace(0, max_tau, 3 * max_tau, endpoint=False)
-    ax[0].plot(tau, exp_curve(tau, *contact_angle_time_popt), 'b--')
-    ax[0].plot(list(range(max_tau)), contact_angle_time_corrs, 'r.')
-    ax[0].set_xlabel(r'$\tau$  (frames)')
-    ax[0].set_ylabel(r'$C_{\theta}(\tau)$')
-    ax[0].set_title('Normalized autocorrelation of contact angle against time')
-    phi = np.linspace(0, 180, 3 * max_a, endpoint=False)
-    ax[1].plot(phi, exp_curve(phi, *contact_angle_azi_popt), 'b--')
-    ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), contact_angle_azi_corrs, 'r.')
-    ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
-    ax[1].set_ylabel(r'$C_{\theta}(\varphi)$')
-    ax[1].set_title('Normalized autocorrelation of contact angle against azimuth')
-    fig.savefig(os.path.join(args.output_dir, 'inst_contact_angles.png'), dpi=(3*fig.dpi),
-                bbox_inches='tight', pad_inches=0.05)
-    
-    fig = plt.figure(figsize=(14, 7), layout='constrained')
-    subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
-    plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), ooplane_angles,
-                                  'Instantaneous interfacial out-of-plane angles', r'$\delta(t,\varphi)$')
-    ax = subfigs[1].subplots(2, 1)
-    ax[0].plot(tau, exp_curve(tau, *ooplane_angle_time_popt), 'b--')
-    ax[0].plot(list(range(max_tau)), ooplane_angle_time_corrs, 'r.')
-    ax[0].set_xlabel(r'$\tau$  (frames)')
-    ax[0].set_ylabel(r'$C_{\delta}(\tau)$')
-    ax[0].set_title('Normalized autocorrelation of out-of-plane angle against time')
-    ax[1].plot(phi, exp_curve(phi, *ooplane_angle_azi_popt), 'b--')
-    ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), ooplane_angle_azi_corrs, 'r.')
-    ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
-    ax[1].set_ylabel(r'$C_{\delta}(\varphi)$')
-    ax[1].set_title('Normalized autocorrelation of out-of-plane angle against azimuth')
-    fig.savefig(os.path.join(args.output_dir, 'inst_out-of-plane_angles.png'), dpi=(3*fig.dpi),
-                bbox_inches='tight', pad_inches=0.05)
+    if not args.no_graphics:
+
+        fig = plt.figure(figsize=(14, 7), layout='constrained')
+        subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
+        plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), contact_angles,
+                                    'Instantaneous contact angles', r'$\theta(t,\varphi)$')
+        ax = subfigs[1].subplots(2, 1)
+        tau = np.linspace(0, max_tau, 3 * max_tau, endpoint=False)
+        ax[0].plot(tau, exp_curve(tau, *contact_angle_time_popt), 'b--')
+        ax[0].plot(list(range(max_tau)), contact_angle_time_corrs, 'r.')
+        ax[0].set_xlabel(r'$\tau$  (frames)')
+        ax[0].set_ylabel(r'$C_{\theta}(\tau)$')
+        ax[0].set_title('Normalized autocorrelation of contact angle against time')
+        phi = np.linspace(0, 180, 3 * max_a, endpoint=False)
+        ax[1].plot(phi, exp_curve(phi, *contact_angle_azi_popt), 'b--')
+        ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), contact_angle_azi_corrs, 'r.')
+        ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
+        ax[1].set_ylabel(r'$C_{\theta}(\varphi)$')
+        ax[1].set_title('Normalized autocorrelation of contact angle against azimuth')
+        fig.savefig(os.path.join(args.output_dir, 'inst_contact_angles.png'), dpi=(3*fig.dpi),
+                    bbox_inches='tight', pad_inches=0.05)
+        
+        fig = plt.figure(figsize=(14, 7), layout='constrained')
+        subfigs = fig.subfigures(1, 2, wspace=0.06, width_ratios=[1.5, 1.0])
+        plot_against_time_and_azimuth(subfigs[0], subfigs[0].subplots(), ooplane_angles,
+                                    'Instantaneous interfacial out-of-plane angles', r'$\delta(t,\varphi)$')
+        ax = subfigs[1].subplots(2, 1)
+        ax[0].plot(tau, exp_curve(tau, *ooplane_angle_time_popt), 'b--')
+        ax[0].plot(list(range(max_tau)), ooplane_angle_time_corrs, 'r.')
+        ax[0].set_xlabel(r'$\tau$  (frames)')
+        ax[0].set_ylabel(r'$C_{\delta}(\tau)$')
+        ax[0].set_title('Normalized autocorrelation of out-of-plane angle against time')
+        ax[1].plot(phi, exp_curve(phi, *ooplane_angle_azi_popt), 'b--')
+        ax[1].plot(np.linspace(0, 180, max_a, endpoint=False), ooplane_angle_azi_corrs, 'r.')
+        ax[1].set_xlabel(r'$\varphi\;\;(\degree)$')
+        ax[1].set_ylabel(r'$C_{\delta}(\varphi)$')
+        ax[1].set_title('Normalized autocorrelation of out-of-plane angle against azimuth')
+        fig.savefig(os.path.join(args.output_dir, 'inst_out-of-plane_angles.png'), dpi=(3*fig.dpi),
+                    bbox_inches='tight', pad_inches=0.05)
 
     log_file.write('-------------------------\n')
     log_file.write(' Instantaneous interface\n')
@@ -447,7 +451,7 @@ def main() -> None:
     log_file.write(f'Out-of-plane angle correlation time = {1 / ooplane_angle_time_popt[1]} [frames]\n')
     log_file.write(f'Out-of-plane angle azimuthal correlation scale = {1 / ooplane_angle_azi_popt[1]} [deg]\n\n')
 
-    contact_angle_inst_var = np.var(np.mean(contact_angles, axis=-1))
+    #contact_angle_inst_var = np.var(np.mean(contact_angles, axis=-1))
 
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
@@ -458,124 +462,126 @@ def main() -> None:
 
     console.print(f'Computed time-averaged interface in [green]{elapsed_time(time_start_1)}[/green].')
     
-    fig, ax = plt.subplots(2, 3)
-    fig.set_size_inches(15, 5)
-    interval = max(int(N_frames * N_water / 2e5), 1)
+    if not args.no_graphics:
 
-    time_start_1 = time.time()
-    for i in progress_bar_iter(6, 'Plotting time-averaged density functions...'):
+        fig, ax = plt.subplots(2, 3)
+        fig.set_size_inches(15, 5)
+        interval = max(int(N_frames * N_water / 2e5), 1)
 
-        idx = i * (N_azi // 12)
-        angle = i * np.pi / 6
-        rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
-                               (-np.sin(angle), np.cos(angle), 0.0),
-                               (0.0,            0.0,           1.0)))
-        rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
-        rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
-        plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True,
-                              color_inter = (1.0, 0.0, 1.0, 0.4))
-            
-        for k in (0, int(N_azi / 2)):
-            if args.local:
-                rot_carbon_c = rot_matrix @ results.local_sheet_c[idx + k]
-                rot_carbon_n = rot_matrix @ results.local_sheet_n[idx + k]
-                a_x = rot_carbon_c[0] - CARBON_RADIUS
-                a_z = rot_carbon_c[2] + (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
-                b_x = rot_carbon_c[0] + CARBON_RADIUS
-                b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
-                ax[i // 3][i % 3].plot((a_x, b_x), (a_z, b_z), 'k-')
-            rot_inter = rot_matrix @ results.interfaces[idx + k]
-            rot_norm = rot_matrix @ results.normals[idx + k]
-            a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
-            b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
-            ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
-        ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
-        ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
-                                            f'{results.contact_angles[idx + (N_azi // 2)]:.1f}' +
-                                            r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
-                                            f'{results.contact_angles[idx]:.1f}' + r'\degree$'),
-                                            ha='left', va='top',
-                                            transform=ax[i // 3][i % 3].transAxes)
+        time_start_1 = time.time()
+        for i in progress_bar_iter(6, 'Plotting time-averaged density functions...'):
 
-        ax[i // 3][i % 3].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
+            idx = i * (N_azi // 12)
+            angle = i * np.pi / 6
+            rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
+                                (-np.sin(angle), np.cos(angle), 0.0),
+                                (0.0,            0.0,           1.0)))
+            rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
+            rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
+            plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True,
+                                color_inter = (1.0, 0.0, 1.0, 0.4))
+                
+            for k in (0, int(N_azi / 2)):
+                if args.local:
+                    rot_carbon_c = rot_matrix @ results.local_sheet_c[idx + k]
+                    rot_carbon_n = rot_matrix @ results.local_sheet_n[idx + k]
+                    a_x = rot_carbon_c[0] - CARBON_RADIUS
+                    a_z = rot_carbon_c[2] + (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
+                    b_x = rot_carbon_c[0] + CARBON_RADIUS
+                    b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
+                    ax[i // 3][i % 3].plot((a_x, b_x), (a_z, b_z), 'k-')
+                rot_inter = rot_matrix @ results.interfaces[idx + k]
+                rot_norm = rot_matrix @ results.normals[idx + k]
+                a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
+                b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
+                ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
+            ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
+            ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
+                                                f'{results.contact_angles[idx + (N_azi // 2)]:.1f}' +
+                                                r'\degree$' + '\n' + r'$\theta_{right}\;=\;' +
+                                                f'{results.contact_angles[idx]:.1f}' + r'\degree$'),
+                                                ha='left', va='top',
+                                                transform=ax[i // 3][i % 3].transAxes)
 
-    fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
-    fig.tight_layout()
-    fig.savefig(os.path.join(args.output_dir, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
-                bbox_inches='tight', pad_inches=0.05)
-    
-    console.print('Plotted time-averaged density functions in ' +
-                  f'[green]{elapsed_time(time_start_1)}[/green].')
-    
-    time_start_1 = time.time()
-    with console.status('[green]Plotting best-fit sphere...'):
+            ax[i // 3][i % 3].set_title(r'$\varphi\;=\;' + f'{(angle * 180 / np.pi):.0f}' + r'\degree$')
 
-        fig, ax = plt.subplots()
-        fig.set_size_inches(6, 6)
-
-        max_r_coord = 1.5 * results.foot_r
-        min_z_coord = np.min(carbons[:,:,2])
-        max_z_coord = 1.5 * (results.sphere_z + results.sphere_r)
-        r_bin_edges = np.linspace(0.0, max_r_coord, 81)
-        z_bin_edges = np.linspace(min_z_coord, max_z_coord, 81)
-        r_bin_centers = 0.5 * (r_bin_edges[1:] + r_bin_edges[:-1])
-        r_bin_pad = 0.5 * (r_bin_edges[1] - r_bin_edges[0])
-        z_bin_pad = 0.5 * (z_bin_edges[1] - z_bin_edges[0])
-        bin_volumes = 2.0 * np.pi * ((r_bin_edges[1:]**2) - (r_bin_edges[:-1]**2)) * z_bin_pad
-        flattened = waters.reshape(-1, 3)
-        counts, _, _ = np.histogram2d(np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1)),
-                                      flattened[:,2], [r_bin_edges, z_bin_edges])
-        counts /= (N_frames * bin_volumes[:,None])
-        counts = np.swapaxes(counts, 0, 1)
-
-        colors = np.zeros((80, 80, 4))
-        colors[:,:,0] = np.clip((counts / BULK_DENSITY) - 1.0, a_min=0.0, a_max=1.0)
-        colors[:,:,2] = np.clip(2.0 - (counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
-        colors[:,:,3] = np.clip((counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
-        ax.imshow(colors, origin='lower', extent=(-r_bin_pad, max_r_coord + r_bin_pad,
-                                                  min_z_coord - z_bin_pad, max_z_coord + z_bin_pad))
-        cmap = mplc.LinearSegmentedColormap('water_density', {'red':   [(0.0, 1.0, 1.0),
-                                                                        (0.5, 0.0, 0.0),
-                                                                        (1.0, 1.0, 1.0)],
-                                                              'green': [(0.0, 1.0, 1.0),
-                                                                        (0.5, 0.0, 0.0),
-                                                                        (1.0, 0.0, 0.0)],
-                                                              'blue':  [(0.0, 1.0, 1.0),
-                                                                        (0.5, 1.0, 1.0),
-                                                                        (1.0, 0.0, 0.0)]})
-        norm = mplc.Normalize(vmin=0.0, vmax=(2 * BULK_DENSITY))
-        fig.colorbar(ScalarMappable(norm, cmap), ax=ax, label=r'Number density ($\AA^{-3}$)',
-                     fraction=0.046, pad=0.04)
-
-        z_mean = np.empty((80,), dtype=float)
-        z_stdev = np.empty((80,), dtype=float)
-        z_bot = np.empty((80,), dtype=float)
-        z_top = np.empty((80,), dtype=float)
-        flattened = carbons.reshape(-1, 3)
-        radials = np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1))
-        for i in range(80):
-            sample = flattened[np.abs(radials - r_bin_centers[i]) < r_bin_pad, 2]
-            z_mean[i] = np.mean(sample)
-            z_stdev[i] = np.std(sample)
-            z_bot[i] = np.min(sample)
-            z_top[i] = np.max(sample)
-        ax.fill_between(r_bin_centers, z_bot, z_top, color=(0.6, 0.6, 0.6, 0.25))
-        ax.fill_between(r_bin_centers, z_mean - z_stdev, z_mean + z_stdev, color=(0.6, 0.6, 0.6, 0.25))
-        ax.plot(r_bin_centers, z_mean, '-', color=(0.6, 0.6, 0.6))
-
-        max_phi = np.arccos(np.clip(-results.sphere_z / results.sphere_r, -1.0, 1.0))
-        phi = np.linspace(0, max_phi, 100)
-        ax.plot(results.sphere_r * np.sin(phi), results.sphere_z + (results.sphere_r * np.cos(phi)), 'g-')
-        ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{results.sphere_angle:.1f}' + r'\degree$'),
-                ha='right', va='top', transform=ax.transAxes)
-        ax.set_xlabel(r'r ($\AA$)')
-        ax.set_ylabel(r'z ($\AA$)')
-        ax.set_title('Spherical fit over histogram of water density')
-
-        fig.savefig(os.path.join(args.output_dir, 'ave_sphere_fit.png'), dpi=(3*fig.dpi),
+        fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
+        fig.tight_layout()
+        fig.savefig(os.path.join(args.output_dir, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
                     bbox_inches='tight', pad_inches=0.05)
-    
-    console.print(f'Plotted best-fit sphere in [green]{elapsed_time(time_start_1)}[/green].')
+        
+        console.print('Plotted time-averaged density functions in ' +
+                    f'[green]{elapsed_time(time_start_1)}[/green].')
+        
+        time_start_1 = time.time()
+        with console.status('[green]Plotting best-fit sphere...'):
+
+            fig, ax = plt.subplots()
+            fig.set_size_inches(6, 6)
+
+            max_r_coord = 1.5 * results.foot_r
+            min_z_coord = np.min(carbons[:,:,2])
+            max_z_coord = 1.5 * (results.sphere_z + results.sphere_r)
+            r_bin_edges = np.linspace(0.0, max_r_coord, 81)
+            z_bin_edges = np.linspace(min_z_coord, max_z_coord, 81)
+            r_bin_centers = 0.5 * (r_bin_edges[1:] + r_bin_edges[:-1])
+            r_bin_pad = 0.5 * (r_bin_edges[1] - r_bin_edges[0])
+            z_bin_pad = 0.5 * (z_bin_edges[1] - z_bin_edges[0])
+            bin_volumes = 2.0 * np.pi * ((r_bin_edges[1:]**2) - (r_bin_edges[:-1]**2)) * z_bin_pad
+            flattened = waters.reshape(-1, 3)
+            counts, _, _ = np.histogram2d(np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1)),
+                                        flattened[:,2], [r_bin_edges, z_bin_edges])
+            counts /= (N_frames * bin_volumes[:,None])
+            counts = np.swapaxes(counts, 0, 1)
+
+            colors = np.zeros((80, 80, 4))
+            colors[:,:,0] = np.clip((counts / BULK_DENSITY) - 1.0, a_min=0.0, a_max=1.0)
+            colors[:,:,2] = np.clip(2.0 - (counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
+            colors[:,:,3] = np.clip((counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
+            ax.imshow(colors, origin='lower', extent=(-r_bin_pad, max_r_coord + r_bin_pad,
+                                                    min_z_coord - z_bin_pad, max_z_coord + z_bin_pad))
+            cmap = mplc.LinearSegmentedColormap('water_density', {'red':   [(0.0, 1.0, 1.0),
+                                                                            (0.5, 0.0, 0.0),
+                                                                            (1.0, 1.0, 1.0)],
+                                                                'green': [(0.0, 1.0, 1.0),
+                                                                            (0.5, 0.0, 0.0),
+                                                                            (1.0, 0.0, 0.0)],
+                                                                'blue':  [(0.0, 1.0, 1.0),
+                                                                            (0.5, 1.0, 1.0),
+                                                                            (1.0, 0.0, 0.0)]})
+            norm = mplc.Normalize(vmin=0.0, vmax=(2 * BULK_DENSITY))
+            fig.colorbar(ScalarMappable(norm, cmap), ax=ax, label=r'Number density ($\AA^{-3}$)',
+                        fraction=0.046, pad=0.04)
+
+            z_mean = np.empty((80,), dtype=float)
+            z_stdev = np.empty((80,), dtype=float)
+            z_bot = np.empty((80,), dtype=float)
+            z_top = np.empty((80,), dtype=float)
+            flattened = carbons.reshape(-1, 3)
+            radials = np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1))
+            for i in range(80):
+                sample = flattened[np.abs(radials - r_bin_centers[i]) < r_bin_pad, 2]
+                z_mean[i] = np.mean(sample)
+                z_stdev[i] = np.std(sample)
+                z_bot[i] = np.min(sample)
+                z_top[i] = np.max(sample)
+            ax.fill_between(r_bin_centers, z_bot, z_top, color=(0.6, 0.6, 0.6, 0.25))
+            ax.fill_between(r_bin_centers, z_mean - z_stdev, z_mean + z_stdev, color=(0.6, 0.6, 0.6, 0.25))
+            ax.plot(r_bin_centers, z_mean, '-', color=(0.6, 0.6, 0.6))
+
+            max_phi = np.arccos(np.clip(-results.sphere_z / results.sphere_r, -1.0, 1.0))
+            phi = np.linspace(0, max_phi, 100)
+            ax.plot(results.sphere_r * np.sin(phi), results.sphere_z + (results.sphere_r * np.cos(phi)), 'g-')
+            ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{results.sphere_angle:.1f}' + r'\degree$'),
+                    ha='right', va='top', transform=ax.transAxes)
+            ax.set_xlabel(r'r ($\AA$)')
+            ax.set_ylabel(r'z ($\AA$)')
+            ax.set_title('Spherical fit over histogram of water density')
+
+            fig.savefig(os.path.join(args.output_dir, 'ave_sphere_fit.png'), dpi=(3*fig.dpi),
+                        bbox_inches='tight', pad_inches=0.05)
+        
+        console.print(f'Plotted best-fit sphere in [green]{elapsed_time(time_start_1)}[/green].')
 
     log_file.write('-------------------------\n')
     log_file.write(' Time-averaged interface\n')
@@ -685,24 +691,26 @@ def main() -> None:
         idx = int(round(0.75 * N_blocksizes))
         idx = np.argpartition(stat_inefficiencies, idx)[idx]
 
-        fig, ax = plt.subplots(1, 2)
-        fig.set_size_inches(10, 5)
-        ax[0].plot(blocksizes, stat_inefficiencies, 'b.')
-        ax[0].plot((blocksizes[idx],), (stat_inefficiencies[idx],), 'r.')
-        ax[0].set_xlabel('Blocksize')
-        ax[0].set_ylabel('Statistical inefficiency')
-        ax[0].set_title('Statistical inefficiency against blocksize')
-        ax[1].errorbar(blocksizes, contact_angle_block_means,
-                       yerr=np.sqrt(contact_angle_block_vars / (N_blocks - 1.0)), fmt='b.')
-        ax[1].errorbar((blocksizes[idx],), (contact_angle_block_means[idx],),
-                       yerr=(np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1.0)),), fmt='r.')
-        ax[1].set_xlabel('Blocksize')
-        ax[1].set_ylabel(r'$\langle\theta\rangle_{b}\,(\degree)$')
-        ax[1].set_title('Block-averaged contact angle against blocksize')
+        if not args.no_graphics:
 
-        fig.tight_layout()
-        fig.savefig(os.path.join(args.output_dir, 'blocksizes.png'), dpi=(3*fig.dpi),
-                    bbox_inches='tight', pad_inches=0.05)
+            fig, ax = plt.subplots(1, 2)
+            fig.set_size_inches(10, 5)
+            ax[0].plot(blocksizes, stat_inefficiencies, 'b.')
+            ax[0].plot((blocksizes[idx],), (stat_inefficiencies[idx],), 'r.')
+            ax[0].set_xlabel('Blocksize')
+            ax[0].set_ylabel('Statistical inefficiency')
+            ax[0].set_title('Statistical inefficiency against blocksize')
+            ax[1].errorbar(blocksizes, contact_angle_block_means,
+                        yerr=np.sqrt(contact_angle_block_vars / (N_blocks - 1.0)), fmt='b.')
+            ax[1].errorbar((blocksizes[idx],), (contact_angle_block_means[idx],),
+                        yerr=(np.sqrt(contact_angle_block_vars[idx] / (N_blocks[idx] - 1.0)),), fmt='r.')
+            ax[1].set_xlabel('Blocksize')
+            ax[1].set_ylabel(r'$\langle\theta\rangle_{b}\,(\degree)$')
+            ax[1].set_title('Block-averaged contact angle against blocksize')
+
+            fig.tight_layout()
+            fig.savefig(os.path.join(args.output_dir, 'blocksizes.png'), dpi=(3*fig.dpi),
+                        bbox_inches='tight', pad_inches=0.05)
 
         log_file.write('---------------------------------------------\n')
         log_file.write(' Block-averaging of time-averaged interfaces\n')
