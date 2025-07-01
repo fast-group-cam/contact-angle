@@ -42,7 +42,7 @@ def main() -> None:
     for line in prog_desc_header.splitlines()[2:-1]:
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
-    parser = argparse.ArgumentParser(prog='make-droplet-movie', description=prog_desc,
+    parser = argparse.ArgumentParser(prog='make_droplet_movie', description=prog_desc,
                                      usage='%(prog)s input_file [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_file', nargs='+',

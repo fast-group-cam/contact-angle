@@ -33,7 +33,7 @@ def main() -> None:
     for line in prog_desc_header.splitlines()[2:-1]:
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
-    parser = argparse.ArgumentParser(prog='water-density', description=prog_desc,
+    parser = argparse.ArgumentParser(prog='water_density', description=prog_desc,
                                      usage='%(prog)s input_file [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_file', nargs='+',

@@ -9,8 +9,9 @@ from typing import IO, Iterable
 
 def center_coordinates(
         atoms: ase.Atoms,
-        cell_params: np.ndarray
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        cell_params: np.ndarray,
+        return_shift: bool = False
+        ) -> tuple[np.ndarray, ...]:
     """Takes in a single frame of a trajectory of a droplet of water on graphene, and shifts the
     coordinates so that the centre-of-mass of the droplet is on the z-axis (at x = y = 0) with the
     graphene plane at z = 0.
@@ -23,6 +24,9 @@ def center_coordinates(
         carbon atom, and must contain exactly twice as many hydrogen atoms as oxygen atoms.
     cell_params : array_like
         The cell parameters, expressed as [cell_x, cell_y, cell_z].
+    return_shift : bool, optional
+        Whether or not to return the coordinate shift vector, which is useful for tracking the
+        absolute motion of the droplet CoM; defaults to False for backwards compatibility.
 
     Returns
     -------
@@ -33,6 +37,9 @@ def center_coordinates(
         The Cartesian coordinates of the carbon atoms, with shape (N_carbon, 3).
     hydrogens : ndarray
         The Cartesian coordinates of the hydrogen atoms, with shape (2 * N_water, 3).
+    shift : ndarray, only if `return_shift` is true
+        The vector of shape (3,) representing the shift of the coordinate system's origin with
+        respect to the original coordinates.
     """
 
     # Split according to atom type
@@ -45,24 +52,31 @@ def center_coordinates(
     if hydrogens.shape[0] != (2 * N_water):
         warnings.warn(f'Found {N_water} oxygens and {hydrogens.shape[0]} hydrogens, numbers do ' +
                       'not match!', RuntimeWarning)
-        return (oxygens, carbons, hydrogens)
+        return ((oxygens, carbons, hydrogens, np.zeros(3)) if return_shift else
+                (oxygens, carbons, hydrogens))
+
+    shift = np.zeros(3)
 
     # If there are no carbons, return just the water (centred on unit cell)
     if carbons.shape[0] == 0:
         if N_water == 0:
             warnings.warn('Input trajectory is empty!', RuntimeWarning)
-            return (oxygens, carbons, hydrogens)
+            return ((oxygens, carbons, hydrogens, shift) if return_shift else
+                    (oxygens, carbons, hydrogens))
         CoM = np.mean(oxygens, axis=0)
         oxygens -= CoM
         hydrogens -= CoM
+        shift += CoM
         cell_p = np.array(cell_params[0:3])
         for _ in range(3):
             oxygens -= cell_p * np.round(oxygens / cell_p)
             CoM = np.mean(oxygens, axis=0)
             oxygens -= CoM
             hydrogens -= CoM
+            shift += CoM
         hydrogens -= cell_p * np.round(hydrogens / cell_p)
-        return (oxygens, carbons, hydrogens)
+        return ((oxygens, carbons, hydrogens, shift) if return_shift else
+                (oxygens, carbons, hydrogens))
 
     # Set middle of graphene sheet to z = 0
     cell_z = cell_params[2]
@@ -72,12 +86,14 @@ def center_coordinates(
         carbons[:,2] -= mean_carbon_z_coord
         oxygens[:,2] -= mean_carbon_z_coord
         hydrogens[:,2] -= mean_carbon_z_coord
+        shift[2] += mean_carbon_z_coord
 
     # If there are no water molecules, return just the carbons (centred on unit cell)
     if N_water == 0:
         cell_xy = np.array(cell_params[0:2])
         carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
-        return (oxygens, carbons, hydrogens)
+        return ((oxygens, carbons, hydrogens, shift) if return_shift else
+                (oxygens, carbons, hydrogens))
 
     # Send all water molecules to the +z side of the graphene
     oxygens[oxygens[:,2] < 0.0] += np.array((0, 0, cell_z))
@@ -89,6 +105,7 @@ def center_coordinates(
     oxygens -= CoM
     carbons -= CoM
     hydrogens -= CoM
+    shift += CoM
     
     # Improve each guess of the CoM iteratively by:
     #   - Relative to the previous guess of the CoM, move all molecules to the same unit cell
@@ -102,6 +119,7 @@ def center_coordinates(
         oxygens -= CoM
         carbons -= CoM
         hydrogens -= CoM
+        shift += CoM
 
     # Centralize unit cell
     carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
@@ -114,12 +132,13 @@ def center_coordinates(
     oxygens[:,2] -= cell_z * np.round((oxygens[:,2] - CoM_z) / cell_z)
     hydrogens[:,2] -= cell_z * np.round((hydrogens[:,2] - CoM_z) / cell_z)
 
-    return (oxygens, carbons, hydrogens)
+    return ((oxygens, carbons, hydrogens, shift) if return_shift else (oxygens, carbons, hydrogens))
 
 #==================================================================================================
 
 def read_droplet_trajectory(
         filename: str | PurePath | IO | Iterable,
+        return_shift_trajectory: bool = False,
         **kwargs
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Reads a file (or list of files) containing a NVT trajectory of a water droplet on graphene,
@@ -129,6 +148,10 @@ def read_droplet_trajectory(
     ----------
     filename : file, str, list of files, or of str
         The trajectory file, or list of trajectory files, to read from.
+    return_shift_trajectory : bool, optional
+        Whether or not to return the trajectory of coordinate shift vectors, which is useful for
+        tracking the absolute motion of the droplet CoM; defaults to False for backwards
+        compatibility.
     **kwargs
         Extra arguments are passed directly to `ase.io.iread`.
 
@@ -142,9 +165,12 @@ def read_droplet_trajectory(
     carbons : ndarray
         The time-evolution of the Cartesian coordinates of the carbon atoms, with shape (N_frames,
         N_carbon, 3).
-    hydrogen : ndarray
+    hydrogens : ndarray
         The time-evolution of the Cartesian coordinates of the hydrogen atoms, with shape
         (N_frames, 2 * N_carbon, 3).
+    shift_trajectory : ndarray, only if `return_shift_trajectory` is true
+        The vector of shape (N_frames, 3) representing the shift of the coordinate system's origin
+        with respect to the original coordinates.
 
     Notes
     -----
@@ -169,6 +195,7 @@ def read_droplet_trajectory(
     list_oxygens = list()
     list_carbons = list()
     list_hydrogens = list()
+    list_shifts = list()
 
     for name in filenames:
 
@@ -197,9 +224,12 @@ def read_droplet_trajectory(
                 atoms.numbers[atoms.numbers == 2] = 1
                 atoms.numbers[atoms.numbers == 3] = 8
 
-            oxygens, carbons, hydrogens = center_coordinates(atoms, cell_params)
+            oxygens, carbons, hydrogens, shift = center_coordinates(atoms, cell_params, return_shift=True)
             list_oxygens.append(oxygens)
             list_carbons.append(carbons)
             list_hydrogens.append(hydrogens)
+            list_shifts.append(shift)
 
-    return (cell_params, np.array(list_oxygens), np.array(list_carbons), np.array(list_hydrogens))
+    return ((cell_params, np.array(list_oxygens), np.array(list_carbons), np.array(list_hydrogens),
+             np.array(list_shifts)) if return_shift_trajectory else (cell_params,
+             np.array(list_oxygens), np.array(list_carbons), np.array(list_hydrogens)))
