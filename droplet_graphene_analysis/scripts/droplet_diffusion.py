@@ -120,8 +120,11 @@ def main() -> None:
     ax[0].set_ylabel(r'$y\,\,[\AA]$')
 
     def fmt_str(x):
-        tokens = f'{x:.2E}'.split('E', 1)
-        return tokens[0] + r'\times 10^{' + tokens[1] + r'}'
+        exponent = (int(np.floor(np.log10(abs(x)))) if x != 0.0 else 0)
+        if exponent == 0:
+            return str(x)
+        mantissa = x / (10**exponent)
+        return str(mantissa) + r'\times 10^{' + str(exponent) + r'}'
 
     ax[1].plot(tau_range, autocorr, 'b-')
     ax[1].set_title('Positional autocorrelation against time')

@@ -34,6 +34,8 @@ def main() -> None:
     RADIUS_CARBON = 0.73
     RADIUS_HYDROGEN = 0.31
     RADIUS_OXYGEN = 0.66
+    MARGIN = 12.5
+    PLOT_SPACING = 5.0
 
     #----------------------------------------------------------------------------------------------
     # Generate program description and parse input arguments
@@ -71,7 +73,9 @@ def main() -> None:
     
     time_start_0 = time.time()
     with console.status(f'[green]Reading {file_msg}...'):
-        _, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file, index=args.index)
+        cell_params, oxygens, carbons, hydrogens = read_droplet_trajectory(args.input_file, index=args.index)
+        cell_boundary_x = cell_params[0] / 2
+        cell_boundary_y = cell_params[1] / 2
         N_frames = oxygens.shape[0]
 
     console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
@@ -84,32 +88,169 @@ def main() -> None:
     console.print('Prerender processing...', end='')
 
     NC = carbons.shape[1]
+    NM = 2 * NC
     NH = hydrogens.shape[1]
     NO = oxygens.shape[1]
 
-    scatterpoints = np.zeros((N_frames, NC + NH + NO, 3), dtype=float)
-    scattersizes = np.zeros((NC + NH + NO,), dtype=float)
-    scattercolors = np.zeros((N_frames, NC + NH + NO, 3), dtype=float)
+    scatterpoints = np.zeros((N_frames, NC + NM + NH + NO, 3), dtype=float)
+    scattersizes = np.zeros((NC + NM + NH + NO,), dtype=float)
+    scattercolors = np.zeros((N_frames, NC + NM + NH + NO, 4), dtype=float)
 
     scatterpoints[:, 0:NC] = carbons
-    scattersizes[0:NC] = (2 * RADIUS_CARBON)**2
+    scattersizes[0:(NC + NM)] = (2 * RADIUS_CARBON)**2
     carbon_width = max(np.max(carbons[:,:,2]) - np.min(carbons[:,:,2]), 1.0)
     z_devs = 0.6 * carbons[:,:,2] / carbon_width
     scattercolors[:, 0:NC, 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
     scattercolors[:, 0:NC, 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
     scattercolors[:, 0:NC, 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+    scattercolors[:, 0:NC, 3] = np.ones(NC)
 
-    scatterpoints[:, NC:(NC + NH)] = hydrogens
-    scattersizes[NC:(NC + NH)] = (2 * RADIUS_HYDROGEN)**2
-    scattercolors[:, NC:(NC + NH)] = np.array((0.9, 0.9, 0.9))
+    for t in range(N_frames):
 
-    scatterpoints[:, (NC + NH):(NC + NH + NO)] = oxygens
-    scattersizes[(NC + NH):(NC + NH + NO)] = (2 * RADIUS_OXYGEN)**2
-    scattercolors[:, (NC + NH):(NC + NH + NO)] = np.array((1, 0, 0))
+        ghosts = carbons[t, carbons[t,:,0] > (cell_boundary_x - MARGIN)]
+        ghosts[:,0] -= cell_params[0]
+        if ghosts.shape[0] > NM:
+            ghosts = ghosts[np.argpartition(-ghosts[:,0], NM)[0:NM]]
+        idx = ghosts.shape[0]
+        scatterpoints[t, NC:(NC + idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, NC:(NC + idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, NC:(NC + idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, NC:(NC + idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, NC:(NC + idx), 3] = np.clip(1.0 + ((cell_boundary_x + ghosts[:,0]) / MARGIN), a_min=0.0, a_max=1.0)
 
-    fig = plt.figure(figsize=(14, 7), dpi=300)
-    ax3d = fig.add_subplot(1, 2, 1, projection='3d')
-    ax2d = fig.add_subplot(1, 2, 2)
+        ghosts = carbons[t, carbons[t,:,0] < (MARGIN - cell_boundary_x)]
+        ghosts[:,0] += cell_params[0]
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(ghosts[:,0], NM - idx)[0:(NM - idx)]]
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 + ((cell_boundary_x - ghosts[:,0]) / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        ghosts = carbons[t, carbons[t,:,1] > (cell_boundary_y - MARGIN)]
+        ghosts[:,1] -= cell_params[1]
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(-ghosts[:,1], NM - idx)[0:(NM - idx)]]
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 + ((cell_boundary_y + ghosts[:,1]) / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        ghosts = carbons[t, carbons[t,:,1] < (MARGIN - cell_boundary_y)]
+        ghosts[:,1] += cell_params[1]
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(ghosts[:,1], NM - idx)[0:(NM - idx)]]
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 + ((cell_boundary_y - ghosts[:,1]) / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        corner = np.array((-cell_boundary_x, -cell_boundary_y))
+        ghosts = carbons[t, np.sum((carbons[t,:,0:2] - corner)**2, axis=-1) < MARGIN**2]
+        ghosts = ghosts[ghosts[:,0] > -cell_boundary_x]
+        ghosts = ghosts[ghosts[:,1] > -cell_boundary_y]
+        ghosts[:,0] += cell_params[0]
+        ghosts[:,1] += cell_params[1]
+        dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(dists, NM - idx)[0:(NM - idx)]]
+            dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 - (dists / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        corner = np.array((cell_boundary_x, -cell_boundary_y))
+        ghosts = carbons[t, np.sum((carbons[t,:,0:2] - corner)**2, axis=-1) < MARGIN**2]
+        ghosts = ghosts[ghosts[:,0] < cell_boundary_x]
+        ghosts = ghosts[ghosts[:,1] > -cell_boundary_y]
+        ghosts[:,0] -= cell_params[0]
+        ghosts[:,1] += cell_params[1]
+        dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(dists, NM - idx)[0:(NM - idx)]]
+            dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 - (dists / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        corner = np.array((-cell_boundary_x, cell_boundary_y))
+        ghosts = carbons[t, np.sum((carbons[t,:,0:2] - corner)**2, axis=-1) < MARGIN**2]
+        ghosts = ghosts[ghosts[:,0] > -cell_boundary_x]
+        ghosts = ghosts[ghosts[:,1] < cell_boundary_y]
+        ghosts[:,0] += cell_params[0]
+        ghosts[:,1] -= cell_params[1]
+        dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(dists, NM - idx)[0:(NM - idx)]]
+            dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 - (dists / MARGIN), a_min=0.0, a_max=1.0)
+
+        idx = new_idx
+        corner = np.array((cell_boundary_x, cell_boundary_y))
+        ghosts = carbons[t, np.sum((carbons[t,:,0:2] - corner)**2, axis=-1) < MARGIN**2]
+        ghosts = ghosts[ghosts[:,0] < cell_boundary_x]
+        ghosts = ghosts[ghosts[:,1] < cell_boundary_y]
+        ghosts[:,0] -= cell_params[0]
+        ghosts[:,1] -= cell_params[1]
+        dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        if ghosts.shape[0] > (NM - idx):
+            ghosts = ghosts[np.argpartition(dists, NM - idx)[0:(NM - idx)]]
+            dists = np.sqrt(np.sum((ghosts[:,0:2] + corner)**2, axis=-1))
+        new_idx = idx + ghosts.shape[0]
+        scatterpoints[t, (NC + idx):(NC + new_idx)] = ghosts
+        z_devs = 0.6 * ghosts[:,2] / carbon_width
+        scattercolors[t, (NC + idx):(NC + new_idx), 0] = np.clip(0.5 + z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 1] = np.clip(0.5 - (np.square(z_devs) / 0.3), a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 2] = np.clip(0.5 - z_devs, a_min=0.0, a_max=1.0)
+        scattercolors[t, (NC + idx):(NC + new_idx), 3] = np.clip(1.0 - (dists / MARGIN), a_min=0.0, a_max=1.0)
+
+        scatterpoints[t, (NC + new_idx):(NC + NM)] = np.array((0.0, 0.0, 0.0))
+        scattercolors[t, (NC + new_idx):(NC + NM)] = np.array((0.0, 0.0, 0.0, 0.0))
+
+
+    scatterpoints[:, (NC + NM):(NC + NM + NH)] = hydrogens
+    scattersizes[(NC + NM):(NC + NM + NH)] = (2 * RADIUS_HYDROGEN)**2
+    scattercolors[:, (NC + NM):(NC + NM + NH)] = np.array((0.9, 0.9, 0.9, 1.0))
+
+    scatterpoints[:, (NC + NM + NH):(NC + NM + NH + NO)] = oxygens
+    scattersizes[(NC + NM + NH):(NC + NM + NH + NO)] = (2 * RADIUS_OXYGEN)**2
+    scattercolors[:, (NC + NM + NH):(NC + NM + NH + NO)] = np.array((1.0, 0.0, 0.0, 1.0))
+
+    scatteredges = np.zeros((N_frames, NC + NM + NH + NO, 4), dtype=float)
+    scatteredges[:,:,3] = scattercolors[:,:,3]
+
+    fig = plt.figure(figsize=(12, 8), dpi=300, constrained_layout=True)
+    ax3d = fig.add_subplot(1, 1, 1, projection='3d')
+    ax2d = ax3d.inset_axes([0.5, 0.65, 0.5, 0.25])
 
     ax3d.set_xlim([np.min(scatterpoints[:,:,0]), np.max(scatterpoints[:,:,0])])
     ax3d.set_ylim([np.min(scatterpoints[:,:,1]), np.max(scatterpoints[:,:,1])])
@@ -133,17 +274,23 @@ def main() -> None:
     scattersizes *= lscale
 
     render3d = ax3d.scatter(scatterpoints[0,:,0], scatterpoints[0,:,1], scatterpoints[0,:,2],
-                            s=scattersizes, c=scattercolors[0], depthshade=False, linewidth=0.1)
-    render3d.set_edgecolor('black')
+                            s=scattersizes, facecolors=scattercolors[0], edgecolors=scatteredges[0],
+                            depthshade=False, linewidths=0.1)
+    ax3d.set_xlim([np.min(scatterpoints[:,:,0]), np.max(scatterpoints[:,:,0])])
+    ax3d.set_ylim([np.min(scatterpoints[:,:,1]), np.max(scatterpoints[:,:,1])])
+    ax3d.set_zlim([np.min(scatterpoints[:,:,2]), np.max(scatterpoints[:,:,2])])
 
-    frame_label = ax3d.annotate('Frame #0', (0, 1), xycoords='axes fraction', ha='left', va='top')
+    frame_label = ax3d.annotate('Frame #0', (0, 0.8), xycoords='axes fraction', ha='left', va='top')
 
     render2d = plot_density_xz_slice(oxygens[0], carbons[0], ax2d, show_interface=True)
-    ax2d.set_xlim([np.min(scatterpoints[:,:,0]), np.max(scatterpoints[:,:,0])])
-    ax2d.set_ylim([np.min(scatterpoints[:,:,2]), np.max(scatterpoints[:,:,2])])
+    ax2d.set_xlim([-cell_boundary_x, cell_boundary_x])
+    ax2d.set_ylim([np.min(scatterpoints[:,:,2]) - PLOT_SPACING, np.max(scatterpoints[:,:,2]) + PLOT_SPACING])
     ax2d.set_xlabel(r'x [$\AA$]')
     ax2d.set_ylabel(r'z [$\AA$]')
     ax2d.set_title('Density plot along xz slice')
+
+    fig.set_layout_engine('none')
+    ax3d.set_position([-0.08, -0.16, 1.16, 1.16])
 
     console.print(f'complete in [green]{elapsed_time(time_start_1)}[/green].')
     progress_bar = Progress(console=console, transient=True)
@@ -153,6 +300,7 @@ def main() -> None:
     def update(frame):
         render3d._offsets3d = scatterpoints[frame].T
         render3d.set_facecolor(scattercolors[frame])
+        render3d.set_edgecolor(scatteredges[frame])
         frame_label.set(text=f'Frame #{frame}')
         update_density_xz_slice(oxygens[frame], carbons[frame], render2d)
         progress_bar.update(progress_bar_task, advance=1)
