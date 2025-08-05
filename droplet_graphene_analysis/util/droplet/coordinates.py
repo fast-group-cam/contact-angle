@@ -96,8 +96,8 @@ def center_coordinates(
                 (oxygens, carbons, hydrogens))
 
     # Send all water molecules to the +z side of the graphene
-    oxygens[oxygens[:,2] < 0.0] += np.array((0, 0, cell_z))
-    hydrogens[hydrogens[:,2] < 0.0] += np.array((0, 0, cell_z))
+    oxygens[:,2] = np.remainder(oxygens[:,2], cell_z)
+    hydrogens[:,2] = np.remainder(hydrogens[:,2], cell_z)
 
     # First guess of droplet CoM without accounting for periodic boundaries
     CoM = np.mean(oxygens, axis=0)
@@ -126,8 +126,6 @@ def center_coordinates(
     hydrogens[:,0:2] -= cell_xy * np.round(hydrogens[:,0:2] / cell_xy)
 
     # Fixing a weird bug where the droplet is sometimes set to the wrong side of the unit cell
-    oxygens[:,2] = np.remainder(oxygens[:,2], cell_z)
-    hydrogens[:,2] = np.remainder(hydrogens[:,2], cell_z)
     CoM_z = np.mean(oxygens[:,2])
     oxygens[:,2] -= cell_z * np.round((oxygens[:,2] - CoM_z) / cell_z)
     hydrogens[:,2] -= cell_z * np.round((hydrogens[:,2] - CoM_z) / cell_z)

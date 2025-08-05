@@ -1,5 +1,6 @@
 import numpy as np
-from .grid import cast_to_gridsize, smooth_sheet
+from .grid import cast_to_gridsize
+from .sheet import raw_heightmap
 
 #==================================================================================================
 
@@ -31,7 +32,7 @@ def calc_fourier_coefficients(
     """
 
     N_x, N_y = cast_to_gridsize(N_points)
-    sheet = smooth_sheet(carbons, cell_xy, N_points)
+    sheet = raw_heightmap(carbons, cell_xy, N_points)
 
     coeffs = np.fft.fft2(sheet, s=(N_x, N_y))
 

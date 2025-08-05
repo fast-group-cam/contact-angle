@@ -1,5 +1,6 @@
 from .coarse_grain import *
 import numpy as np
+from typing import Any, Callable
 from matplotlib.axes import Axes
 from matplotlib.artist import Artist
 
@@ -251,3 +252,126 @@ def update_density_xz_slice(
         artists[2].set_xdata(inter_pts[:,0])
         artists[2].set_ydata(inter_pts[:,2])
         artists[2].set_color(color_inter)
+
+#==================================================================================================
+
+def plot_density_radially_symmetric(
+        waters: np.ndarray,
+        mean_heightmap: Callable[..., Any],
+        axis: Axes,
+        n_plot_bins: int = 80,
+        n_azi: int = 100, *,
+        coarse_grain_length: float = COARSE_GRAIN_LENGTH,
+        cutoff_density: float = CUTOFF_DENSITY,
+        bulk_density: float = BULK_DENSITY,
+        slicing_cutoff: float = SLICING_CUTOFF,
+        color_carbon: tuple[float, ...] | str = (0.6, 0.6, 0.6)
+        ) -> tuple[Artist, ...]:
+    """Plots the coarse-grained density distribution, averaged azimuthally.
+
+    Parameters
+    ----------
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, with shape (N_frames, N_water, 3) for a
+        collection of frames; the density distribution is averaged over the frames.
+    mean_heightmap : function (..., 2) -> (...)
+        The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
+        be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
+        shape (..., 2) and returning the appropriate scalars, with domain spanning -cell_x/2 to
+        cell_x/2 along the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
+    axis : Axes
+        The MatPlotLib Axes object to plot onto.
+    n_plot_bins : int, optional
+        The number of cells to divide the image into for calculating the density distribution; a
+        larger number yields higher resolution. Defaults to 80.
+    n_azi : int, optional
+        The number of azimuthal directions to average over; defaults to 100.
+    
+    Returns
+    -------
+    artists : tuple[Artist, ...]
+        A tuple of Artists involved with the plot.
+
+    Other Parameters
+    ----------------
+    coarse_grain_length : float, optional
+        This parameter is passed to `coarse_grained_density`.
+    cutoff_density : float, optional
+        This parameter is passed to `coarse_grained_density`.
+    bulk_density: float, optional
+        The expected value of the coarse-grained density distribution for bulk liquid. This
+        determines the color scale of the plot; specifically, the color map used maps densities
+        below `bulk_density` to a blue color #0000FF with alpha (opacity) equal to the relative
+        ratio, and densities between one to two times of `bulk_density` to a linear interpolation
+        between red #FF0000 and blue #0000FF with alpha 1.
+    slicing_cutoff : float, optional
+        This parameter is passed on `find_interface`. Furthermore, only water molecules and carbon
+        atoms within `slicing_cutoff` * `coarse_grain_length` of the y = 0 plane are considered to
+        be part of the xz 'slice', and contribute to the plot.
+    color_carbon : color, optional
+        The color to plot the mean heightmap with.
+    """
+
+    # Check shapes of waters and carbons
+    if (len(waters.shape) == 2 and waters.shape[-1] == 3):
+        pass
+    elif (len(waters.shape) == 3 and waters.shape[-1] == 3):
+        N_frames = waters.shape[0]
+        return plot_density_radially_symmetric(waters.reshape(-1, 3), mean_heightmap, axis=axis,
+                                               n_plot_bins=n_plot_bins, n_azi=n_azi,
+                                               coarse_grain_length=coarse_grain_length,
+                                               cutoff_density=(N_frames * cutoff_density),
+                                               bulk_density=(N_frames * bulk_density),
+                                               slicing_cutoff=slicing_cutoff,
+                                               color_carbon=color_carbon)
+    else:
+        raise RuntimeError(f'Unregonized input: waters {waters.shape} shaped wrongly!')
+
+    # Find droplet height and CoM
+    CoM = np.mean(waters, axis=0)
+    droplet_h = find_interface(waters, CoM, (0, 0, 1), coarse_grain_length=coarse_grain_length,
+                               cutoff_density=cutoff_density, slicing_cutoff=slicing_cutoff)[2]
+    floor = mean_heightmap(CoM[0:2])[0]
+    slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
+
+    # Calculate plot bounds
+    r_max = 2.0 * find_interface(waters, CoM, (1, 0, 0), coarse_grain_length=coarse_grain_length,
+                                 cutoff_density=cutoff_density, slicing_cutoff=slicing_cutoff)[0]
+    z_min = ((2.0 * floor) if floor < 0 else 0.0)
+    z_max = 1.5 * droplet_h
+
+    # Plot density function
+    r_space = np.linspace(0.0, r_max, n_plot_bins)
+    r_pad = (r_space[1] - r_space[0]) / 2.0
+    z_space = np.linspace(z_min, z_max, n_plot_bins)
+    z_pad = (z_space[1] - z_space[0]) / 2.0
+    phi = np.linspace(0.0, 2 * np.pi, n_azi, endpoint=False)
+    azi = np.c_[np.cos(phi), np.sin(phi)]
+    densities = np.empty((n_plot_bins, n_plot_bins))
+    for i, r in enumerate(r_space):
+        for j, z in enumerate(z_space):
+            testpoints = np.c_[r * azi[:,0], r * azi[:,1], np.full(n_azi, z)]
+            sliced = waters[np.abs(waters[:,2] - z) < slice_width]
+            radii = np.sqrt(np.sum(sliced[:,0:2]**2, axis=-1))
+            sliced = sliced[np.abs(radii - r) < slice_width]
+            densities[j,i] = np.mean(coarse_grained_density(testpoints, sliced,
+                                                            coarse_grain_length=coarse_grain_length))
+    colors = np.zeros((n_plot_bins, n_plot_bins, 4), dtype=float)
+    colors[:,:,0] = np.clip((densities / bulk_density) - 1.0, a_min=0.0, a_max=1.0)
+    colors[:,:,2] = np.clip(2.0 - (densities / bulk_density), a_min=0.0, a_max=1.0)
+    colors[:,:,3] = np.clip((densities / bulk_density), a_min=0.0, a_max=1.0)
+
+    artists = list()
+    artists.append(axis.imshow(colors, origin='lower', extent=(-r_pad, r_max + r_pad,
+                                                               z_min - z_pad, z_max + z_pad)))
+
+    # Plot carbons
+    z_mean = np.empty((n_plot_bins,), dtype=float)
+    for i, r in enumerate(r_space):
+        z_mean[i] = np.mean(mean_heightmap(r * azi))
+    artists.append(axis.plot(r_space, z_mean, '-', color=color_carbon)[0])
+    
+    axis.set_xlim(0.0, r_max)
+    axis.set_ylim(z_min, z_max)
+    axis.set_aspect('equal')
+    return tuple(artists)

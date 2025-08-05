@@ -37,16 +37,16 @@ import argparse
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mplc
 
 from rich.console import Console
 from rich.progress import track, Progress
+from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import curve_fit
-from matplotlib.cm import ScalarMappable
-from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory, best_fit_axial_sphere
+from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.droplet import find_interface
-from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
-from droplet_graphene_analysis.util.graphene import generate_grid, smooth_sheet
+from droplet_graphene_analysis.util.droplet.contact_angle import find_droplet_foot, find_spherical_cap
+from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice, plot_density_radially_symmetric
+from droplet_graphene_analysis.util.graphene import regularized_heightmap
 
 def main() -> None:
 
@@ -54,16 +54,11 @@ def main() -> None:
     # Script default parameters
 
     N_AZIMUTHS = 60       # Number of azimuthal directions to analyze per frame
-    Z_FOOT = 5            # Height of the droplet foot (in angstroms)
-    STEP_BACK = 10        # Step back per iteration of foot-finding algorithm (in angstroms)
     MAX_TAU = 25          # Maximum timescale to calculate autocorrelations (in number of frames)
-    N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
     N_BLOCKSIZES = 30     # Number of blocksizes to scan for automatic determination
 
-    from droplet_graphene_analysis.util.graphene.angle import CUTOFF_RADIUS as CARBON_RADIUS
-    CARBON_RADIUS_SQ = CARBON_RADIUS**2
-
-    from droplet_graphene_analysis.util.droplet.coarse_grain import BULK_DENSITY
+    from droplet_graphene_analysis.util.droplet.contact_angle import Z_FOOT
+    from droplet_graphene_analysis.util.graphene.sheet import CUTOFF_RADIUS as CARBON_RADIUS
 
     #----------------------------------------------------------------------------------------------
     # Generate program description and parse input arguments
@@ -81,8 +76,6 @@ def main() -> None:
                         help='index or slice of indices to take from each input file')
     parser.add_argument('--N_azimuths', type=int, default=N_AZIMUTHS, dest='N_azimuths',
                         help='number of azimuthal angles to analyze per frame')
-    parser.add_argument('--local', action='store_true', dest='local',
-                        help='use local definition of graphene inclination')
     parser.add_argument('--z_foot', type=float, default=Z_FOOT, dest='z_foot',
                         help='height (in angstroms) of the droplet foot above the graphene sheet')
     parser.add_argument('--max_tau', type=int, default=MAX_TAU, dest='max_tau',
@@ -128,18 +121,15 @@ def main() -> None:
 
     #----------------------------------------------------------------------------------------------
     # Helper functions
-
-    def arcsin(x):
-        return np.arcsin(x) * 180 / np.pi
     
-    def arccos(x):
+    def arccos_deg(x):
         return np.arccos(x) * 180 / np.pi
     
-    def arctan(x):
-        return np.arctan(x) * 180 / np.pi
-    
-    def cot(x):
+    def cot_deg(x):
         return -np.tan((x + 90.0) * np.pi / 180)
+
+    def has_nan(x: np.ndarray) -> bool:
+        return np.isnan(np.sum(x))
 
     def exp_curve(x, A, k, c):
         return A * np.exp(-k * x) + c
@@ -171,43 +161,6 @@ def main() -> None:
 
     def progress_bar_iter(N_iter, desc):
         return track(range(N_iter), description=desc, console=console, transient=True)
-
-    #----------------------------------------------------------------------------------------------
-    # Helper function for finding interface at droplet foot
-
-    def droplet_foot_interfaces(waters, carbons, search_directions, adj_z_foot):
-
-        # Calculate droplet CoM and floor, and flatten carbons array
-        CoM = np.mean(waters, axis=(0, 1))
-        graphene = carbons.reshape(-1, 3)
-        
-        # Iterate through search directions
-        interfaces = list()
-        normals = list()
-        for search_dir in search_directions:
-
-            # First guess of interface
-            inter = find_interface(waters, (0, 0, CoM[2]), search_dir)
-
-            # Find z-coordinate of graphene underneath first guess
-            nearby_Cs = graphene[np.sum((graphene[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
-            local_floor = np.mean(nearby_Cs[:,2])
-
-            # Second guess of interface (and repeat refinement)
-            step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
-            inter = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                            local_floor + adj_z_foot), search_dir)
-            nearby_Cs = graphene[np.sum((graphene[:,0:2] - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ]
-            local_floor = np.mean(nearby_Cs[:,2])
-
-            # Third and final guess of interface
-            step_back = min(np.dot(inter, search_dir), STEP_BACK) * search_dir
-            inter, norm = find_interface(waters, (inter[0] - step_back[0], inter[1] - step_back[1],
-                                                  local_floor + adj_z_foot), search_dir, calc_normal=True)
-            interfaces.append(inter)
-            normals.append(norm)
-
-        return (np.array(interfaces), np.array(normals))
     
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
@@ -229,23 +182,21 @@ def main() -> None:
     # calculate nominal interfacial separation for solid-liquid interface
 
     time_start_1 = time.time()
-    if args.local:
-        sheet_res_x = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
-        sheet_res_y = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
-        sheet_gridpts = generate_grid((sheet_res_x, sheet_res_y), cell_params[0:2])
-        sheets = np.empty((N_frames, sheet_res_x, sheet_res_y), dtype=float)
-        for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
-            sheets[f] = smooth_sheet(carbons[f], cell_params[0:2], (sheet_res_x, sheet_res_y))
-        central_sheet_height = np.mean(sheets, axis=0)[sheet_res_x // 2, sheet_res_y // 2]
-    else:
-        z = np.empty((N_frames,), dtype=float)
-        for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
-            z[f] = smooth_sheet(carbons[f], cell_params[0:2], 1)[0, 0]
-        central_sheet_height = np.mean(z)
+    
+    sheet_Nx = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
+    sheet_Ny = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
+    sheet_dx = cell_params[0] / sheet_Nx
+    sheet_dy = cell_params[1] / sheet_Ny
+    sheet_gridx = np.linspace((sheet_dx - cell_params[0]) / 2.0, (cell_params[0] - sheet_dx) / 2.0, sheet_Nx)
+    sheet_gridy = np.linspace((sheet_dy - cell_params[1]) / 2.0, (cell_params[1] - sheet_dy) / 2.0, sheet_Ny)
+    sheets = np.empty((N_frames, sheet_Nx, sheet_Ny), dtype=float)
+    for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
+        sheets[f] = regularized_heightmap(carbons[f], cell_params[0:2], (sheet_Nx, sheet_Ny))
+    central_sheet_height = np.mean(sheets, axis=0)[sheet_Nx // 2, sheet_Ny // 2]
+
     CoM_z = np.mean(waters[:,:,2])
     droplet_roof = find_interface(waters, (0, 0, CoM_z), (0, 0, 1))[2]
     droplet_floor = find_interface(waters, (0, 0, CoM_z), (0, 0, -1))[2]
-    adj_z_foot = args.z_foot + droplet_floor - central_sheet_height
     console.print(f'Processed graphene sheet in [green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
@@ -270,78 +221,50 @@ def main() -> None:
 
         results = argparse.Namespace()
 
+        mean_sheet = np.mean(sheets[start_frame:end_frame], axis=0)
+        mean_heightmap = RegularGridInterpolator((sheet_gridx, sheet_gridy), mean_sheet)
+        dh_dx = (np.roll(mean_sheet, -1, axis=0) - np.roll(mean_sheet, 1, axis=0)) / (2 * sheet_dx)
+        dh_dy = (np.roll(mean_sheet, -1, axis=1) - np.roll(mean_sheet, 1, axis=1)) / (2 * sheet_dy)
+        dh_dx = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dx)
+        dh_dy = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dy)
+
         azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
         search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
         search_perp = np.c_[-np.sin(azi), np.cos(azi)]
-        interfaces, normals = droplet_foot_interfaces(waters[start_frame:end_frame],
-                                                      carbons[start_frame:end_frame],
-                                                      search_dirs, adj_z_foot)
+        interfaces, normals = find_droplet_foot(waters[start_frame:end_frame], mean_heightmap,
+                                                search_dirs, z_foot=args.z_foot)
         results.interfaces = interfaces
         results.normals = normals
-        results.foot_r = np.mean(np.linalg.norm(interfaces[:,0:2], axis=-1))
         
-        if args.local:
-            mean_sheet = np.mean(sheets[start_frame:end_frame], axis=0)
-            local_sheet_c = np.empty((N_azi, 3), dtype=float)
-            local_sheet_n = np.empty((N_azi, 3), dtype=float)
-            contact_angles = np.empty((N_azi,), dtype=float)
-            for i, inter in enumerate(interfaces):
-                nearby_idx = np.sum((sheet_gridpts - inter[0:2])**2, axis=-1) < CARBON_RADIUS_SQ
-                nearby = np.concat([sheet_gridpts[nearby_idx], mean_sheet[nearby_idx, None]], axis=-1)
-                local_sheet_c[i] = np.mean(nearby, axis=0)
-                local_sheet_n[i] = np.linalg.svd(nearby - local_sheet_c[i], full_matrices=False)[2][-1]
-                local_sheet_n[i] /= np.linalg.norm(local_sheet_n[i]) * np.sign(local_sheet_n[i,2])
-                contact_angles[i] = arccos(np.dot(normals[i], local_sheet_n[i]))
-            results.mean_sheet = mean_sheet
-            results.local_sheet_c = local_sheet_c
-            results.local_sheet_n = local_sheet_n
-        else:
-            contact_angles = arccos(np.dot(normals, (0, 0, 1)))
-        results.contact_angles = contact_angles
-        results.foot_r = np.mean(np.linalg.norm(interfaces[:,0:2], axis=-1) + (args.z_foot * cot(contact_angles)))
+        local_sheet_c = np.empty((N_azi, 3), dtype=float)
+        local_sheet_n = np.empty((N_azi, 3), dtype=float)
+        contact_angles = np.empty((N_azi,), dtype=float)
+        for i, inter in enumerate(interfaces):
+            if has_nan(inter):
+                local_sheet_c[i] = np.full((3,), np.nan)
+                local_sheet_n[i] = np.full((3,), np.nan)
+                contact_angles[i] = 90.0
+            else:
+                local_sheet_c[i] = np.array((inter[0], inter[1], mean_heightmap(inter[0:2])[0]))
+                normal_vec = np.array((-dh_dx(inter[0:2])[0], -dh_dy(inter[0:2])[0], 1.0))
+                local_sheet_n[i] = normal_vec / np.linalg.norm(normal_vec)
+                contact_angles[i] = arccos_deg(np.dot(normals[i], local_sheet_n[i]))
+        results.local_sheet_c = local_sheet_c
+        results.local_sheet_n = local_sheet_n
+        results.contact_angles = np.nan_to_num(contact_angles, copy=False, nan=90.0)
+        results.foot_r = np.nanmean(np.linalg.norm(interfaces[:,0:2], axis=-1) +
+                                    (args.z_foot * cot_deg(contact_angles)))
 
         proj_normals = np.power(np.sum(normals[:,0:2]**2, axis=-1), -0.5)[:,None] * normals[:,0:2]
         ooplane_angles = np.arcsin(np.sum(proj_normals * search_perp, axis=-1)) * 180 / np.pi
-        results.ooplane_angles = ooplane_angles
+        results.ooplane_angles = np.nan_to_num(ooplane_angles, copy=False)
 
         if sphere_fit:
-            CoM = np.mean(waters[start_frame:end_frame], axis=(0,1))
-            phi = 2 * np.pi * np.random.random(N_SPHERE_PTS)
-            cosine_theta = np.random.random(N_SPHERE_PTS)
-            sine_theta = np.sqrt(1.0 - (cosine_theta**2))
-            axes = np.c_[np.cos(phi) * sine_theta, np.sin(phi) * sine_theta, cosine_theta]
-            sphere_pts = np.empty((N_SPHERE_PTS, 3))
-            for i in range(N_SPHERE_PTS):
-                sphere_pts[i,:] = find_interface(waters[start_frame:end_frame], CoM, axes[i])
-            sphere_r, sphere_z = best_fit_axial_sphere(sphere_pts)
-            if args.local:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('error')
-                    try:
-                        sphere_a = np.sqrt((sphere_r**2) - (sphere_z**2))
-                        sheet_radials = np.sqrt(np.sum(sheet_gridpts**2, axis=-1))
-                        for _ in range(5):
-                            nearby_idx = np.abs(sheet_radials - sphere_a) < CARBON_RADIUS
-                            intersection_z = np.mean(mean_sheet[nearby_idx])
-                            sphere_a = np.sqrt((sphere_r**2) - ((sphere_z - intersection_z)**2))
-                        nearby_idx = np.abs(sheet_radials - sphere_a) < CARBON_RADIUS
-                        intersection_z = np.mean(mean_sheet[nearby_idx])
-                        sphere_angle = 90.0 + arcsin((sphere_z - intersection_z) / sphere_r)
-                        nearby_grad = np.polyfit(sheet_radials[nearby_idx], mean_sheet[nearby_idx], 1)[0]
-                        sphere_angle += arctan(nearby_grad)
-                    except RuntimeWarning:
-                        sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
-            else:
-                if np.abs(sphere_z) < sphere_r:
-                    sphere_a = np.sqrt((sphere_r**2) - (sphere_z**2))
-                    sphere_angle = 90.0 + arcsin(sphere_z / sphere_r)
-                else:
-                    sphere_a = 0.0
-                    sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
-            results.sphere_r = sphere_r
-            results.sphere_z = sphere_z
-            results.sphere_a = sphere_a
-            results.sphere_angle = sphere_angle
+            sphere_results = find_spherical_cap(waters[start_frame:end_frame], mean_heightmap)
+            results.sphere_r = sphere_results['r']
+            results.sphere_z = sphere_results['z']
+            results.sphere_a = sphere_results['a']
+            results.sphere_angle = sphere_results['angle']
         
         return results
 
@@ -474,15 +397,14 @@ def main() -> None:
             idx = i * (N_azi // 12)
             angle = i * np.pi / 6
             rot_matrix = np.array(((np.cos(angle),  np.sin(angle), 0.0),
-                                (-np.sin(angle), np.cos(angle), 0.0),
-                                (0.0,            0.0,           1.0)))
+                                   (-np.sin(angle), np.cos(angle), 0.0),
+                                   (0.0,            0.0,           1.0)))
             rot_waters = np.einsum('kl,ijl->ijk', rot_matrix, waters[::interval])
             rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
-            plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True,
-                                color_inter = (1.0, 0.0, 1.0, 0.4))
+            plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True)
                 
             for k in (0, int(N_azi / 2)):
-                if args.local:
+                if not (has_nan(results.interfaces[idx + k]) or has_nan(results.normals[idx + k])):
                     rot_carbon_c = rot_matrix @ results.local_sheet_c[idx + k]
                     rot_carbon_n = rot_matrix @ results.local_sheet_n[idx + k]
                     a_x = rot_carbon_c[0] - CARBON_RADIUS
@@ -490,11 +412,11 @@ def main() -> None:
                     b_x = rot_carbon_c[0] + CARBON_RADIUS
                     b_z = rot_carbon_c[2] - (CARBON_RADIUS * rot_carbon_n[0] / rot_carbon_n[2])
                     ax[i // 3][i % 3].plot((a_x, b_x), (a_z, b_z), 'k-')
-                rot_inter = rot_matrix @ results.interfaces[idx + k]
-                rot_norm = rot_matrix @ results.normals[idx + k]
-                a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
-                b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
-                ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
+                    rot_inter = rot_matrix @ results.interfaces[idx + k]
+                    rot_norm = rot_matrix @ results.normals[idx + k]
+                    a_x = rot_inter[0] + (rot_inter[2] * rot_norm[2] / rot_norm[0])
+                    b_x = rot_inter[0] - (2 * rot_inter[2] * rot_norm[2] / rot_norm[0])
+                    ax[i // 3][i % 3].plot((a_x, b_x), (0.0, 3 * rot_inter[2]), '-', color=(1.0, 0.0, 1.0))
             ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
             ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
                                                 f'{results.contact_angles[idx + (N_azi // 2)]:.1f}' +
@@ -519,64 +441,19 @@ def main() -> None:
             fig, ax = plt.subplots()
             fig.set_size_inches(6, 6)
 
-            max_r_coord = 1.5 * results.foot_r
-            min_z_coord = np.min(carbons[:,:,2])
-            max_z_coord = 1.5 * (results.sphere_z + results.sphere_r)
-            r_bin_edges = np.linspace(0.0, max_r_coord, 81)
-            z_bin_edges = np.linspace(min_z_coord, max_z_coord, 81)
-            r_bin_centers = 0.5 * (r_bin_edges[1:] + r_bin_edges[:-1])
-            r_bin_pad = 0.5 * (r_bin_edges[1] - r_bin_edges[0])
-            z_bin_pad = 0.5 * (z_bin_edges[1] - z_bin_edges[0])
-            bin_volumes = 2.0 * np.pi * ((r_bin_edges[1:]**2) - (r_bin_edges[:-1]**2)) * z_bin_pad
-            flattened = waters.reshape(-1, 3)
-            counts, _, _ = np.histogram2d(np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1)),
-                                        flattened[:,2], [r_bin_edges, z_bin_edges])
-            counts /= (N_frames * bin_volumes[:,None])
-            counts = np.swapaxes(counts, 0, 1)
-
-            colors = np.zeros((80, 80, 4))
-            colors[:,:,0] = np.clip((counts / BULK_DENSITY) - 1.0, a_min=0.0, a_max=1.0)
-            colors[:,:,2] = np.clip(2.0 - (counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
-            colors[:,:,3] = np.clip((counts / BULK_DENSITY), a_min=0.0, a_max=1.0)
-            ax.imshow(colors, origin='lower', extent=(-r_bin_pad, max_r_coord + r_bin_pad,
-                                                    min_z_coord - z_bin_pad, max_z_coord + z_bin_pad))
-            cmap = mplc.LinearSegmentedColormap('water_density', {'red':   [(0.0, 1.0, 1.0),
-                                                                            (0.5, 0.0, 0.0),
-                                                                            (1.0, 1.0, 1.0)],
-                                                                'green': [(0.0, 1.0, 1.0),
-                                                                            (0.5, 0.0, 0.0),
-                                                                            (1.0, 0.0, 0.0)],
-                                                                'blue':  [(0.0, 1.0, 1.0),
-                                                                            (0.5, 1.0, 1.0),
-                                                                            (1.0, 0.0, 0.0)]})
-            norm = mplc.Normalize(vmin=0.0, vmax=(2 * BULK_DENSITY))
-            fig.colorbar(ScalarMappable(norm, cmap), ax=ax, label=r'Number density ($\AA^{-3}$)',
-                        fraction=0.046, pad=0.04)
-
-            z_mean = np.empty((80,), dtype=float)
-            z_stdev = np.empty((80,), dtype=float)
-            z_bot = np.empty((80,), dtype=float)
-            z_top = np.empty((80,), dtype=float)
-            flattened = carbons.reshape(-1, 3)
-            radials = np.sqrt(np.sum(flattened[:,0:2]**2, axis=-1))
-            for i in range(80):
-                sample = flattened[np.abs(radials - r_bin_centers[i]) < r_bin_pad, 2]
-                z_mean[i] = np.mean(sample)
-                z_stdev[i] = np.std(sample)
-                z_bot[i] = np.min(sample)
-                z_top[i] = np.max(sample)
-            ax.fill_between(r_bin_centers, z_bot, z_top, color=(0.6, 0.6, 0.6, 0.25))
-            ax.fill_between(r_bin_centers, z_mean - z_stdev, z_mean + z_stdev, color=(0.6, 0.6, 0.6, 0.25))
-            ax.plot(r_bin_centers, z_mean, '-', color=(0.6, 0.6, 0.6))
+            mean_sheet = np.mean(sheets, axis=0)
+            mean_heightmap = RegularGridInterpolator((sheet_gridx, sheet_gridy), mean_sheet)
+            plot_density_radially_symmetric(waters, mean_heightmap, ax)
 
             max_phi = np.arccos(np.clip(-results.sphere_z / results.sphere_r, -1.0, 1.0))
             phi = np.linspace(0, max_phi, 100)
-            ax.plot(results.sphere_r * np.sin(phi), results.sphere_z + (results.sphere_r * np.cos(phi)), 'g-')
+            ax.plot(results.sphere_r * np.sin(phi), results.sphere_z + (results.sphere_r * np.cos(phi)),
+                    '-', color=(0.9, 0.45, 0.0))
             ax.text(0.99, 0.99, (r'$\theta\;=\;' + f'{results.sphere_angle:.1f}' + r'\degree$'),
                     ha='right', va='top', transform=ax.transAxes)
             ax.set_xlabel(r'r ($\AA$)')
             ax.set_ylabel(r'z ($\AA$)')
-            ax.set_title('Spherical fit over histogram of water density')
+            ax.set_title('Spherical fit over time-averaged droplet')
 
             fig.savefig(os.path.join(args.output_dir, 'ave_sphere_fit.png'), dpi=(3*fig.dpi),
                         bbox_inches='tight', pad_inches=0.05)

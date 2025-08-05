@@ -101,8 +101,12 @@ def main() -> None:
     tau_range = np.arange(max_tau) * args.delta_t
     fit_y = autocorr[1:] / tau_range[1:]
     fit_p = np.polyfit(tau_range[1:], fit_y, deg=1)
-    drift_vel = np.sqrt(fit_p[0])
-    diffusion = fit_p[1] / 4
+    if fit_p[0] >= 0.0:
+        drift_vel = np.sqrt(fit_p[0])
+        diffusion = fit_p[1] / 4
+    else:
+        drift_vel = 0.0
+        diffusion = np.mean(fit_y) / 4
 
     console.print(f'Calculated autocorrelations in [green]{elapsed_time(time_start_1)}[/green].')
 
@@ -112,20 +116,29 @@ def main() -> None:
     fig, ax = plt.subplots(1, 2)
     fig.set_size_inches(14, 7)
 
+    traj -= traj[0]
+    traj -= cell_xy * np.round(traj / cell_xy)
+    extent = max(np.max(traj[:,0]) - np.min(traj[:,0]), np.max(traj[:,1]) - np.min(traj[:,1]))
+    center = np.mean(traj, axis=0)
+    width = 0.6 * extent
+
     scatterplot = ax[0].scatter(traj[:,0], traj[:,1], s=np.linspace(0, 2, N_frames),
                                 c=(np.arange(N_frames) * args.delta_t), cmap='YlGnBu')
     fig.colorbar(scatterplot, ax=ax[0], label=r'$t\,\,[ps]$')
     ax[0].set_title('Droplet CoM trajectory')
     ax[0].set_xlabel(r'$x\,\,[\AA]$')
     ax[0].set_ylabel(r'$y\,\,[\AA]$')
+    ax[0].set_xlim(center[0] - width, center[0] + width)
+    ax[0].set_ylim(center[1] - width, center[1] + width)
 
     def fmt_str(x):
         exponent = (int(np.floor(np.log10(abs(x)))) if x != 0.0 else 0)
         if exponent == 0:
             return str(x)
         mantissa = x / (10**exponent)
-        return str(mantissa) + r'\times 10^{' + str(exponent) + r'}'
+        return f'{mantissa:.2f}' + r'\times 10^{' + str(exponent) + r'}'
 
+    ax[1].plot(tau_range, (4 * diffusion * tau_range) + ((drift_vel * tau_range)**2), 'k--')
     ax[1].plot(tau_range, autocorr, 'b-')
     ax[1].set_title('Positional autocorrelation against time')
     ax[1].set_xlabel(r'$\tau\,\,[ps]$')

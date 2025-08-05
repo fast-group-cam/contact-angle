@@ -1,14 +1,8 @@
 import warnings
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 from scipy.optimize import curve_fit
-from .grid import cast_to_gridsize, generate_grid, smooth_sheet
-from .sheet import C_C_DISTANCE
-
-#==================================================================================================
-# Default parameters for local inclination angle
-
-CUTOFF_RADIUS = 4.5    # Cutoff radius (in angstroms)
+from .grid import cast_to_gridsize
+from .sheet import C_C_DISTANCE, CUTOFF_RADIUS, regularized_heightmap
 
 #==================================================================================================
 
@@ -47,7 +41,7 @@ def calc_inclination_angles(
         The cutoff radius for evaluating the carbon atoms which constitute the local neighbourhood
         of each test point, in angstroms. Defaults to 4.5.
     margin : float, optional
-        This parameter is passed to `smooth_sheet`.
+        This parameter is passed to `regularized_heightmap`.
     """
 
     if len(carbons.shape) == 3 and carbons.shape[-1] == 3:
@@ -56,40 +50,33 @@ def calc_inclination_angles(
         N_x, N_y = cast_to_gridsize(calc_points)
         results = np.zeros((N_frames, N_x, N_y), dtype=float)
         for f, c in enumerate(carbons):
-            results[f] = calc_inclination_angles(c, cell_xy, calc_points,
-                                                 cutoff=cutoff, margin=margin)
+            z = regularized_heightmap(c, cell_xy, calc_points, cutoff, margin=margin)
+            results[f] = _calc_inclination_angles_from_heightmap(z, cell_xy)
         return results
 
     elif len(carbons.shape) == 2 and carbons.shape[-1] == 3:
 
-        pos = generate_grid(calc_points, cell_xy)
-        interp = smooth_sheet(carbons, cell_xy, calc_points, margin=margin)
-        points = np.c_[pos[:,:], interp[:,:,None]]
-        N_x, N_y = interp.shape
-
-        k_x = int(cutoff * N_x / cell_xy[0])
-        k_y = int(cutoff * N_y / cell_xy[1])
-        window_size_x = (2 * k_x) + 1
-        window_size_y = (2 * k_y) + 1
-        padded = np.pad(points, ((k_x, k_x), (k_y, k_y), (0, 0)), mode='wrap')
-        padded[:k_x,:,0] -= cell_xy[0]
-        padded[-k_x:,:,0] += cell_xy[0]
-        padded[:,:k_y,1] -= cell_xy[1]
-        padded[:,-k_y:,1] += cell_xy[1]
-
-        patches = sliding_window_view(padded, (window_size_x, window_size_y, 3))
-        patches = patches.reshape(N_x * N_y, window_size_x * window_size_y, 3)
-        patches -= patches.mean(axis=1, keepdims=True)
-
-        normals = np.empty((N_x * N_y, 3), dtype=float)
-        for i, patch in enumerate(patches):
-            normals[i] = np.linalg.svd(patch, full_matrices=False)[2][-1]
-            normals[i] /= np.linalg.norm(normals[i])
-
-        return (np.arccos(np.abs(normals[:,2])) * 180 / np.pi).reshape(N_x, N_y)
+        z = regularized_heightmap(carbons, cell_xy, calc_points, cutoff, margin=margin)
+        return _calc_inclination_angles_from_heightmap(z, cell_xy)
     
     else:
         raise RuntimeError(f'Unregonized input shape: carbons {carbons.shape}')
+
+#==================================================================================================
+
+def _calc_inclination_angles_from_heightmap(
+        heightmap: np.ndarray,
+        cell_xy: np.ndarray | tuple[float, float]
+        ) -> np.ndarray:
+    
+    N_x, N_y = heightmap.shape
+    d_x = cell_xy[0] / N_x
+    d_y = cell_xy[1] / N_y
+    dz_dx = (np.roll(heightmap, -1, axis=0) - np.roll(heightmap, 1, axis=0)) / (2 * d_x)
+    dz_dy = (np.roll(heightmap, -1, axis=1) - np.roll(heightmap, 1, axis=1)) / (2 * d_y)
+    cosines = np.power(1.0 + (dz_dx**2) + (dz_dy**2), -0.5)
+    return (np.arccos(cosines) * 180 / np.pi)
+
 
 #==================================================================================================
 

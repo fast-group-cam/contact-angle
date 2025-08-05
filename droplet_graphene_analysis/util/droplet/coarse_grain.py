@@ -1,5 +1,6 @@
 import warnings
 import numpy as np
+from numba import jit
 
 #==================================================================================================
 # Default parameters for Willard-Chandler coarse-graining function
@@ -45,58 +46,56 @@ def coarse_grained_density(
         An array of shape (N_pos,), representing the densities at each position. A scalar is
         returned if only one position is supplied.
     """
-
-    if len(waters.shape) == 2 and waters.shape[-1] == 3:
-        N_frames = 1
-        waters_unrolled = waters
-    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
-        N_frames = waters.shape[0]
-        waters_unrolled = waters.reshape(-1, 3)
-    else:
-        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
-
-    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3) / N_frames
-    scaling = -0.5 / (coarse_grain_length**2)
-
-    if pos.shape == (3,):
-
-        dist = waters_unrolled - pos
-        return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
     
-    elif len(pos.shape) == 2 and pos.shape[-1] == 3:
+    if len(waters.shape) == 2:
+        
+        prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3)
+        scaling = -0.5 / (coarse_grain_length**2)
+        chunk_size = max(1, max_size // pos.size)
 
-        if (pos.shape[0] * waters_unrolled.shape[0] * 3) < max_size:
-            dist = waters_unrolled[None,:,:] - pos[:,None,:]
-            return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
+        if len(pos.shape) == 1:
+            return _cg_dens_chunked(np.atleast_2d(pos), waters, prefactor, scaling, chunk_size)[0]
+        elif len(pos.shape) == 2:
+            return _cg_dens_chunked(pos, waters, prefactor, scaling, chunk_size)
         else:
-            results = np.empty((pos.shape[0],), dtype=float)
-            for i, p in enumerate(pos):
-                dist = waters_unrolled - p
-                results[i] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
-            return results
+            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), waters, prefactor, scaling,
+                                    chunk_size).reshape(pos.shape[:-1])
 
-    elif len(pos.shape) == 3 and pos.shape[-1] == 3:
+    elif len(waters.shape) == 3:
 
-        if (pos.shape[0] * pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
-            dist = waters_unrolled[None,None,:,:] - pos[:,:,None,:]
-            return np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
-        elif (pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
-            results = np.empty((pos.shape[0], pos.shape[1]), dtype=float)
-            for i, p in enumerate(pos):
-                dist = waters_unrolled[None,:,:] - p[:,None,:]
-                results[i] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)), axis=-1)
-            return results
+        N_frames = waters.shape[0]
+        flat_waters = waters.reshape(-1, 3)
+        prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3) / N_frames
+        scaling = -0.5 / (coarse_grain_length**2)
+        chunk_size = max(1, max_size // pos.size)
+
+        if len(pos.shape) == 1:
+            return _cg_dens_chunked(np.atleast_2d(pos), flat_waters, prefactor, scaling,
+                                    chunk_size)[0]
+        elif len(pos.shape) == 2:
+            return _cg_dens_chunked(pos, flat_waters, prefactor, scaling, chunk_size)
         else:
-            results = np.empty((pos.shape[0], pos.shape[1]), dtype=float)
-            for i, row in enumerate(pos):
-                for j, p in enumerate(row):
-                    dist = waters_unrolled - p
-                    results[i,j] = np.sum(prefactor * np.exp(scaling * np.sum(np.square(dist), axis=-1)))
-            return results
+            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), flat_waters, prefactor,
+                                    scaling, chunk_size).reshape(pos.shape[:-1])
         
     else:
-        raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
+        raise RuntimeError(f'Unregonized input shape for waters {waters.shape}!')
     
+#--------------------------------------------------------------------------------------------------
+
+@jit('float64[:](float64[:,:], float64[:,:], float64, float64, int32)', nopython=True)
+def _cg_dens_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, scaling: float,
+                     chunk_size: int = MAX_SIZE):
+    result = np.zeros(pos.shape[0])
+    N_waters = waters.shape[0]
+    for start in range(0, N_waters, chunk_size):
+        end = min(start + chunk_size, N_waters)
+        waters_chunk = waters[start:end]
+        disp = waters_chunk[None,:,:] - pos[:,None,:]
+        dist_sq = np.sum(disp**2, axis=-1)
+        result += prefactor * np.sum(np.exp(scaling * dist_sq), axis=-1)
+    return result
+
 #==================================================================================================
 
 def coarse_grained_density_grad(
@@ -104,7 +103,7 @@ def coarse_grained_density_grad(
         waters: np.ndarray, *,
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         max_size: int = MAX_SIZE
-        ) -> float | np.ndarray:
+        ) -> np.ndarray:
     """Calculates the gradient of the coarse-grained density distribution, given the water
     molecules' coordinates, at either one test point or a list of test points.
 
@@ -130,62 +129,55 @@ def coarse_grained_density_grad(
         of shape (3,) is returned if only one position is supplied.
     """
 
-    if len(waters.shape) == 2 and waters.shape[-1] == 3:
-        N_frames = 1
-        waters_unrolled = waters
-    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
+    if len(waters.shape) == 2:
+        
+        prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5)
+        scaling = -0.5 / (coarse_grain_length**2)
+        chunk_size = max(1, max_size // pos.size)
+
+        if len(pos.shape) == 1:
+            return _cg_densgrad_chunked(np.atleast_2d(pos), waters, prefactor, scaling,
+                                        chunk_size)[0]
+        elif len(pos.shape) == 2:
+            return _cg_densgrad_chunked(pos, waters, prefactor, scaling, chunk_size)
+        else:
+            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), waters, prefactor, scaling,
+                                        chunk_size).reshape(pos.shape)
+
+    elif len(waters.shape) == 3:
+
         N_frames = waters.shape[0]
-        waters_unrolled = waters.reshape(-1, 3)
-    else:
-        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
-    
-    prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5) / N_frames
-    scaling = -0.5 / (coarse_grain_length**2)
+        flat_waters = waters.reshape(-1, 3)
+        prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5) / N_frames
+        scaling = -0.5 / (coarse_grain_length**2)
+        chunk_size = max(1, max_size // pos.size)
 
-    if pos.shape == (3,):
-
-        dist = waters_unrolled - pos
-        return np.sum(prefactor * dist[:,:] *
-                      np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
-    
-    elif len(pos.shape) == 2 and pos.shape[-1] == 3:
-
-        if (pos.shape[0] * waters_unrolled.shape[0] * 3) < max_size:
-            dist = waters_unrolled[None,:,:] - pos[:,None,:]
-            return np.sum(prefactor * dist[:,:,:] *
-                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
+        if len(pos.shape) == 1:
+            return _cg_densgrad_chunked(np.atleast_2d(pos), flat_waters, prefactor, scaling,
+                                        chunk_size)[0]
+        elif len(pos.shape) == 2:
+            return _cg_densgrad_chunked(pos, flat_waters, prefactor, scaling, chunk_size)
         else:
-            results = np.empty((pos.shape[0], 3), dtype=float)
-            for i, p in enumerate(pos):
-                dist = waters_unrolled - p
-                results[i] = np.sum(prefactor * dist[:,:] *
-                                    np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
-            return results
-        
-    elif len(pos.shape) == 3 and pos.shape[-1] == 3:
-
-        if (pos.shape[0] * pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
-            dist = waters_unrolled[None,None,:,:] - pos[:,:,None,:]
-            return np.sum(prefactor * dist[:,:,:,:] *
-                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,:,None], axis=2)
-        elif (pos.shape[1] * waters_unrolled.shape[0] * 3) < max_size:
-            results = np.empty((pos.shape[0], pos.shape[1], 3), dtype=float)
-            for i, p in enumerate(pos):
-                dist = waters_unrolled[None,:,:] - p[:,None,:]
-                results[i] = np.sum(prefactor * dist[:,:,:] *
-                                    np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,:,None], axis=1)
-            return results
-        else:
-            results = np.empty((pos.shape[0], pos.shape[1], 3), dtype=float)
-            for i, row in enumerate(pos):
-                for j, p in enumerate(row):
-                    dist = waters_unrolled - p
-                    results[i,j] = np.sum(prefactor * dist[:,:] *
-                                          np.exp(scaling * np.sum(np.square(dist), axis=-1))[:,None], axis=0)
-            return results
+            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), flat_waters, prefactor,
+                                        scaling, chunk_size).reshape(pos.shape)
         
     else:
-        raise RuntimeError(f'Unrecognized input shape: pos {pos.shape}')
+        raise RuntimeError(f'Unregonized input shape for waters {waters.shape}!')
+
+#--------------------------------------------------------------------------------------------------
+
+@jit('float64[:,:](float64[:,:], float64[:,:], float64, float64, int32)', nopython=True)
+def _cg_densgrad_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, scaling: float,
+                     chunk_size: int = MAX_SIZE):
+    result = np.zeros_like(pos)
+    N_waters = waters.shape[0]
+    for start in range(0, N_waters, chunk_size):
+        end = min(start + chunk_size, N_waters)
+        waters_chunk = waters[start:end]
+        disp = waters_chunk[None,:,:] - pos[:,None,:]
+        dist_sq = np.sum(disp**2, axis=-1)
+        result += prefactor * np.sum(disp[:,:,:] * np.exp(scaling * dist_sq)[:,:,None], axis=1)
+    return result
 
 #==================================================================================================
 
@@ -294,11 +286,11 @@ def find_interface(
         N_frames = waters.shape[0]
         waters_unrolled = waters.reshape(-1, 3)
     else:
-        raise RuntimeError(f'Unregonized input shape: waters {waters.shape}')
+        raise RuntimeError(f'Unrecognized input shape: waters {waters.shape}')
     
     # Establish default parameters
     slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
-    search_start = np.array(((0, 0, 0) if search_start is None else search_start), dtype=float)
+    search_start = np.asarray(((0, 0, 0) if search_start is None else search_start), dtype=float)
     axis = np.array(((0, 0, 1) if axis is None else axis), dtype=float)
     axis /= np.linalg.norm(axis)
 

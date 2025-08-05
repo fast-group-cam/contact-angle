@@ -29,7 +29,8 @@ from rich.console import Console
 from rich.progress import track
 from scipy.optimize import curve_fit
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
-from droplet_graphene_analysis.util.graphene import smooth_sheet, calc_inclination_angles
+from droplet_graphene_analysis.util.graphene import regularized_heightmap
+from droplet_graphene_analysis.util.graphene.angle import _calc_inclination_angles_from_heightmap
 
 def main() -> None:
 
@@ -104,18 +105,20 @@ def main() -> None:
     # Calculate interpolated z-heights
 
     time_start_1 = time.time()
-    sheet = np.zeros((N_frames, args.N_x, args.N_y), dtype=float)
+    sheet = np.empty((N_frames, args.N_x, args.N_y), dtype=float)
     for f in track(range(N_frames), description='Interpolating z-heights...', console=console,
                    transient=True):
-        sheet[f] = smooth_sheet(carbons[f], cell_xy, (args.N_x, args.N_y))
+        sheet[f] = regularized_heightmap(carbons[f], cell_xy, (args.N_x, args.N_y))
     console.print(f'Interpolated z-heights in [green]{elapsed_time(time_start_1)}[/green].')
 
     #----------------------------------------------------------------------------------------------
     # Calculate local inclination angles
 
     time_start_1 = time.time()
-    with console.status('[green]Calculating local inclination angles...'):
-        angles = calc_inclination_angles(carbons, cell_xy, (args.N_x, args.N_y))
+    angles = np.empty((N_frames, args.N_x, args.N_y), dtype=float)
+    for f in track(range(N_frames), description='Calculating local inclination angles...',
+                   console=console, transient=True):
+        angles[f] = _calc_inclination_angles_from_heightmap(sheet[f], cell_xy)
     console.print('Calculated local inclination angles in ' +
                   f'[green]{elapsed_time(time_start_1)}[/green].')
 

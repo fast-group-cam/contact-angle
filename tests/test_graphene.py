@@ -8,7 +8,7 @@ def test():
 
     cell_params, _, carbons, _ = read_droplet_trajectory('tests/examples/graphene.xyz')
 
-    interp = smooth_sheet(carbons[0], cell_params[0:2])
+    interp = regularized_heightmap(carbons[0], cell_params[0:2])
     assert np.allclose(interp, np.zeros_like(interp))
 
     angles = calc_inclination_angles(carbons[0], cell_params[0:2])
