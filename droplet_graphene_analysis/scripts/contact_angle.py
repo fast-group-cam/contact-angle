@@ -231,8 +231,10 @@ def main() -> None:
         azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
         search_dirs = np.c_[np.cos(azi), np.sin(azi), np.zeros(N_azi)]
         search_perp = np.c_[-np.sin(azi), np.cos(azi)]
-        interfaces, normals = find_droplet_foot(waters[start_frame:end_frame], mean_heightmap,
-                                                search_dirs, z_foot=args.z_foot)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')  # hack!
+            interfaces, normals = find_droplet_foot(waters[start_frame:end_frame], mean_heightmap,
+                                                    search_dirs, z_foot=args.z_foot)
         results.interfaces = interfaces
         results.normals = normals
         
@@ -245,6 +247,7 @@ def main() -> None:
                 local_sheet_n[i] = np.full((3,), np.nan)
                 contact_angles[i] = 90.0
             else:
+                inter -= cell_params * np.round(inter / cell_params)
                 local_sheet_c[i] = np.array((inter[0], inter[1], mean_heightmap(inter[0:2])[0]))
                 normal_vec = np.array((-dh_dx(inter[0:2])[0], -dh_dy(inter[0:2])[0], 1.0))
                 local_sheet_n[i] = normal_vec / np.linalg.norm(normal_vec)
