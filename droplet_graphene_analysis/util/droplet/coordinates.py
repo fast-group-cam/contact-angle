@@ -56,6 +56,8 @@ def center_coordinates(
                 (oxygens, carbons, hydrogens))
 
     shift = np.zeros(3)
+    cell_xy = np.asarray(cell_params[0:2])
+    cell_p = np.asarray(cell_params[0:3])
 
     # If there are no carbons, return just the water (centred on unit cell)
     if carbons.shape[0] == 0:
@@ -63,17 +65,18 @@ def center_coordinates(
             warnings.warn('Input trajectory is empty!', RuntimeWarning)
             return ((oxygens, carbons, hydrogens, shift) if return_shift else
                     (oxygens, carbons, hydrogens))
+        angles = 2.0 * np.pi * oxygens / cell_p
+        angles = np.arctan2(np.mean(np.sin(angles), axis=0), np.mean(np.cos(angles), axis=0))
+        CoM = 0.5 * cell_p * angles / np.pi
+        oxygens -= CoM
+        hydrogens -= CoM
+        shift += CoM
+        oxygens -= cell_p * np.round(oxygens / cell_p)
         CoM = np.mean(oxygens, axis=0)
         oxygens -= CoM
         hydrogens -= CoM
         shift += CoM
-        cell_p = np.array(cell_params[0:3])
-        for _ in range(3):
-            oxygens -= cell_p * np.round(oxygens / cell_p)
-            CoM = np.mean(oxygens, axis=0)
-            oxygens -= CoM
-            hydrogens -= CoM
-            shift += CoM
+        oxygens -= cell_p * np.round(oxygens / cell_p)
         hydrogens -= cell_p * np.round(hydrogens / cell_p)
         return ((oxygens, carbons, hydrogens, shift) if return_shift else
                 (oxygens, carbons, hydrogens))
@@ -90,7 +93,6 @@ def center_coordinates(
 
     # If there are no water molecules, return just the carbons (centred on unit cell)
     if N_water == 0:
-        cell_xy = np.array(cell_params[0:2])
         carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
         return ((oxygens, carbons, hydrogens, shift) if return_shift else
                 (oxygens, carbons, hydrogens))
@@ -99,29 +101,24 @@ def center_coordinates(
     oxygens[:,2] = np.remainder(oxygens[:,2], cell_z)
     hydrogens[:,2] = np.remainder(hydrogens[:,2], cell_z)
 
-    # First guess of droplet CoM without accounting for periodic boundaries
-    CoM = np.mean(oxygens, axis=0)
-    CoM[2] = 0
+    # Find droplet CoM using circular averaging
+    angles = 2.0 * np.pi * oxygens[:,0:2] / cell_xy
+    angles = np.arctan2(np.mean(np.sin(angles), axis=0), np.mean(np.cos(angles), axis=0))
+    CoM = np.array([0.5 * cell_xy[0] * angles[0] / np.pi, 0.5 * cell_xy[1] * angles[1] / np.pi, 0.0])
     oxygens -= CoM
     carbons -= CoM
     hydrogens -= CoM
     shift += CoM
     
-    # Improve each guess of the CoM iteratively by:
-    #   - Relative to the previous guess of the CoM, move all molecules to the same unit cell
-    #   - Calculate a new guess (wrt previous guess) using this constrained droplet
-    #   - Repeat 3 times, to undo all possible boundary crossings
-    cell_xy = np.array(cell_params[0:2])
-    for _ in range(3):
-        oxygens[:,0:2] -= cell_xy * np.round(oxygens[:,0:2] / cell_xy)
-        CoM = np.mean(oxygens, axis=0)
-        CoM[2] = 0
-        oxygens -= CoM
-        carbons -= CoM
-        hydrogens -= CoM
-        shift += CoM
-
-    # Centralize unit cell
+    # Zero CoM properly and centralize all coordinates to unit cell
+    oxygens[:,0:2] -= cell_xy * np.round(oxygens[:,0:2] / cell_xy)
+    CoM = np.mean(oxygens, axis=0)
+    CoM[2] = 0.0
+    oxygens -= CoM
+    carbons -= CoM
+    hydrogens -= CoM
+    shift += CoM
+    oxygens[:,0:2] -= cell_xy * np.round(oxygens[:,0:2] / cell_xy)
     carbons[:,0:2] -= cell_xy * np.round(carbons[:,0:2] / cell_xy)
     hydrogens[:,0:2] -= cell_xy * np.round(hydrogens[:,0:2] / cell_xy)
 
