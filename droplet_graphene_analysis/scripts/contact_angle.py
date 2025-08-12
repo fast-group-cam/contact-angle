@@ -184,7 +184,9 @@ def main() -> None:
     time_start_1 = time.time()
     
     sheet_Nx = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
+    sheet_Nx += (sheet_Nx % 2) # Hack to ensure that Nx is always even due to bug with FFT forcing even parity
     sheet_Ny = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
+    sheet_Ny += (sheet_Ny % 2) # Hack to ensure that Ny is always even due to bug with FFT forcing even parity
     sheet_dx = cell_params[0] / sheet_Nx
     sheet_dy = cell_params[1] / sheet_Ny
     sheet_gridx = np.linspace((sheet_dx - cell_params[0]) / 2.0, (cell_params[0] - sheet_dx) / 2.0, sheet_Nx)

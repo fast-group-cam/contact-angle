@@ -86,6 +86,10 @@ def main() -> None:
     
     console = Console(highlight=False)
 
+    # Hack due to current issue with FFT forcing even parity only
+    args.N_x += (args.N_x % 2)
+    args.N_y += (args.N_y % 2)
+
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
 
