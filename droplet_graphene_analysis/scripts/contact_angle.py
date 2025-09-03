@@ -10,8 +10,8 @@ prog_desc_header = '''
  and calculating the direction of the plane. Use as:
 
  >    python contact_angle.py <input_file(s)> [--index <index>] [--N_azimuths <N_azimuths]
-          [--local] [--z_foot <z_foot>] [--max_tau <max_tau>] [--block_average]
-          [--blocksize <blocksize>] [-o <output_dir>]
+          [--z_foot <z_foot>] [--max_tau <max_tau>] [--block_average] [--blocksize <blocksize>]
+          [-o <output_dir>] [--no-graphics]
 
  The program performs the following actions in sequence:
 
@@ -26,7 +26,9 @@ prog_desc_header = '''
  full trajectory time-averaged observables.
 
  All plots will be saved to an output directory (specified by the -o option), which defaults to
- "contact-angle" within the parent directory that this program is executed from.
+ "contact-angle" within the parent directory that this program is executed from. The --no-graphics
+ option disables the generation of these plots. Numerical results are also saved in a log.txt file
+ in the output directory.
 ===================================================================================================
 '''
 
@@ -178,15 +180,13 @@ def main() -> None:
                   f'[green]{elapsed_time(time_start_0)}[/green].')
 
     #----------------------------------------------------------------------------------------------
-    # Calculate smoothened carbon sheets for every frame (if --local option is turned on); also
-    # calculate nominal interfacial separation for solid-liquid interface
+    # Calculate smoothened carbon sheets for every frame; also calculate nominal interfacial
+    # separation for solid-liquid interface
 
     time_start_1 = time.time()
     
     sheet_Nx = int(np.ceil(6.0 * cell_params[0] / CARBON_RADIUS))
-    sheet_Nx += (sheet_Nx % 2) # Hack to ensure that Nx is always even due to bug with FFT forcing even parity
     sheet_Ny = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
-    sheet_Ny += (sheet_Ny % 2) # Hack to ensure that Ny is always even due to bug with FFT forcing even parity
     sheet_dx = cell_params[0] / sheet_Nx
     sheet_dy = cell_params[1] / sheet_Ny
     sheet_gridx = np.linspace((sheet_dx - cell_params[0]) / 2.0, (cell_params[0] - sheet_dx) / 2.0, sheet_Nx)

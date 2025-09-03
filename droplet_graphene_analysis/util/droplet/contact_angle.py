@@ -212,11 +212,11 @@ def find_droplet_foot(
 def find_spherical_cap(
         waters: np.ndarray,
         mean_heightmap: Callable[..., Any], *,
-        N_pts: int = N_SPHERE_PTS
+        N_pts: int = N_SPHERE_PTS,
+        get_intersection: bool = True
     ) -> tuple[np.ndarray, np.ndarray]:
-    """Finds the droplet foot(s), defined as the point on the Willard-Chandler interface with
-    z-coordinate equal to the nominal interfacial separation plus z_foot, along a list of given
-    search directions.
+    """Finds the spherical cap, defined as the best-fit sphere for a series of points on the far
+    time-averaged Willard-Chandler interface.
 
     Parameters
     ----------
@@ -231,6 +231,9 @@ def find_spherical_cap(
     N_pts : int, optional
         The number of sampling points to fit the sphere onto; also used for averaging the heightmap
         azimuthally to enforce rotational symmetry. Defaults to 100.
+    get_intersection : bool, optional
+        If true, returns the radius and contact angle at the contact line/circle, else said fields
+        will be missing from the output dictionary. Defaults to True.
 
     Returns
     -------
@@ -238,12 +241,30 @@ def find_spherical_cap(
         A dictionary indicating the properties of the best-fit sphere, with the following fields:
             - 'r': float, the radius of the sphere
             - 'z': float, the z-coordinate of the center of the sphere
-            - 'a': float, the radius of the contact line/circle
-            - 'angle': float, the contact angle
+            - 'a': float, the radius of the contact line/circle (only if get_intersection is true)
+            - 'angle': float, the contact angle (only if get_intersection is true)
     """
 
     # Calculate droplet CoM
     CoM = np.mean(waters, axis=(0, 1)) if len(waters.shape) == 3 else np.mean(waters, axis=0)
+
+    # Search start point is CoM, unless it is below the mean_heightmap
+    search_start = CoM
+    phi = np.linspace(0, 2 * np.pi, max(N_pts // 3, 10), endpoint=False)
+    search_dirs = np.c_[np.cos(phi), np.sin(phi), np.zeros(max(N_pts // 3, 10))]
+    sphere_pts = list()
+    warning_occurred = 0
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error')
+        for search_dir in search_dirs:
+            try:
+                sphere_pts.append(find_interface(waters, search_start, search_dir))
+            except RuntimeWarning:
+                warning_occurred += 1
+    sphere_pts = np.array(sphere_pts)
+    heightmap_highest_height = np.max(mean_heightmap(sphere_pts[:,0:2]))
+    if search_start[2] < heightmap_highest_height:
+        search_start[2] = heightmap_highest_height
 
     # Generate search directions and find points on the spherical cap
     phi = np.linspace(0, 2 * np.pi, N_pts, endpoint=False)
@@ -252,12 +273,11 @@ def find_spherical_cap(
     polars = np.sqrt(1.0 - (polarc**2))
     search_dirs = np.c_[azi[:,0] * polars, azi[:,1] * polars, polarc]
     sphere_pts = list()
-    warning_occurred = 0
     with warnings.catch_warnings():
         warnings.filterwarnings('error')
         for search_dir in search_dirs:
             try:
-                sphere_pts.append(find_interface(waters, CoM, search_dir))
+                sphere_pts.append(find_interface(waters, search_start, search_dir))
             except RuntimeWarning:
                 warning_occurred += 1
     sphere_pts = np.array(sphere_pts)
@@ -276,6 +296,9 @@ def find_spherical_cap(
     sphere_r = np.sqrt(np.sum(np.square(c_vec[0,0])) + c_vec[1,0])
     sphere_z = c_vec[0,0]
     
+    if not get_intersection:
+        return {'r': sphere_r, 'z': sphere_z}
+
     # Iteratively solve for contact point
     with warnings.catch_warnings():
         warnings.filterwarnings('error')

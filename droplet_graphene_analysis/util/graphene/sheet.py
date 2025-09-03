@@ -124,7 +124,7 @@ def regularized_heightmap(
     fourier = np.fft.rfft2(z)
     filter = np.divide(2 * j1(k_mag_scaled), k_mag_scaled, out=np.ones_like(k_mag_scaled),
                        where=(k_mag_scaled > 0.0))
-    return np.fft.irfft2(fourier * filter)
+    return np.fft.irfft2(fourier * filter, z.shape)
     
 
 #==================================================================================================
