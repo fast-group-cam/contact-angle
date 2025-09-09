@@ -265,7 +265,7 @@ def main() -> None:
         results.ooplane_angles = np.nan_to_num(ooplane_angles, copy=False)
 
         if sphere_fit:
-            sphere_results = find_spherical_cap(waters[start_frame:end_frame], mean_heightmap)
+            sphere_results = find_spherical_cap(waters[start_frame:end_frame], cell_params, mean_heightmap)
             results.sphere_r = sphere_results['r']
             results.sphere_z = sphere_results['z']
             results.sphere_a = sphere_results['a']

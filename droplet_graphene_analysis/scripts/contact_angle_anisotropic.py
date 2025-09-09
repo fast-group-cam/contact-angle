@@ -28,7 +28,7 @@ from rich.progress import track
 from scipy.interpolate import RegularGridInterpolator
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 from droplet_graphene_analysis.util.droplet import find_interface
-from droplet_graphene_analysis.util.droplet.contact_angle import find_spherical_cap
+from droplet_graphene_analysis.util.droplet.contact_angle import find_spherical_cap_aniso
 from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
 from droplet_graphene_analysis.util.graphene import regularized_heightmap
 
@@ -149,9 +149,9 @@ def main() -> None:
         dh_dx = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dx)
         dh_dy = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dy)
 
-        sphere_results = find_spherical_cap(waters, mean_heightmap, get_intersection=False)
+        sphere_results = find_spherical_cap_aniso(waters, cell_params, mean_heightmap)
         sphere_r = sphere_results['r']
-        sphere_z = sphere_results['z']
+        sphere_c = sphere_results['c']
 
         azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
         search_directions = np.c_[np.cos(azi), np.sin(azi)]
@@ -162,19 +162,21 @@ def main() -> None:
             with warnings.catch_warnings():
                 warnings.filterwarnings('error')
                 try:
-                    floor = mean_heightmap(CoM[0:2])[0]
+                    floor = mean_heightmap(sphere_c[0:2])[0]
                     for _ in range(10):
-                        a = np.sqrt((sphere_r**2) - ((sphere_z - floor)**2))
-                        floor = mean_heightmap(a * search_dir)[0]
-                    a = np.sqrt((sphere_r**2) - ((sphere_z - floor)**2))
-                    angle = 90.0 + (np.arcsin((sphere_z - floor) / sphere_r) * 180.0 / np.pi)
-                    local_grad = (dh_dx(a * search_dir)[0] * search_dir[0]) + (dh_dy(a * search_dir)[0] * search_dir[1])
+                        a = np.sqrt((sphere_r**2) - ((sphere_c[2] - floor)**2))
+                        test_pt = (a * search_dir) + sphere_c[0:2]
+                        floor = mean_heightmap(test_pt)[0]
+                    a = np.sqrt((sphere_r**2) - ((sphere_c[2] - floor)**2))
+                    test_pt = (a * search_dir) + sphere_c[0:2]
+                    angle = 90.0 + (np.arcsin((sphere_c[2] - floor) / sphere_r) * 180.0 / np.pi)
+                    local_grad = (dh_dx(test_pt)[0] * search_dir[0]) + (dh_dy(test_pt)[0] * search_dir[1])
                     angle += np.arctan(local_grad) * 180.0 / np.pi
                 except RuntimeWarning:
                     a = 0.0
-                    angle = (180.0 if sphere_z > 0.0 else 0.0)
+                    angle = (180.0 if sphere_c[2] > 0.0 else 0.0)
             sphere_intersections[i,0] = a
-            sphere_intersections[i,1] = floor
+            sphere_intersections[i,1] = floor - sphere_c[2]
             sphere_angles[i] = angle
 
     console.print(f'Computed time-averaged interface in [green]{elapsed_time(time_start_1)}[/green].')
@@ -197,11 +199,13 @@ def main() -> None:
             rot_carbons = np.einsum('kl,ijl->ijk', rot_matrix, carbons[::interval])
             plot_density_xz_slice(rot_waters, rot_carbons, ax[i // 3][i % 3], show_interface=True)
 
-            phi_l = np.arctan2(sphere_intersections[idx + (N_azi // 2), 0], sphere_intersections[idx + (N_azi // 2), 1] - sphere_z)
-            phi_r = np.arctan2(sphere_intersections[idx, 0], sphere_intersections[idx, 1] - sphere_z)
+            rot_sphere_c = rot_matrix @ sphere_c
+            phi_l = np.arctan2(sphere_intersections[idx + (N_azi // 2), 0], sphere_intersections[idx + (N_azi // 2), 1])
+            phi_r = np.arctan2(sphere_intersections[idx, 0], sphere_intersections[idx, 1])
             phi = np.linspace(-phi_l, phi_r, 180, endpoint=True)
-            ax[i // 3][i % 3].plot(sphere_r * np.sin(phi), sphere_z + (sphere_r * np.cos(phi)),
+            ax[i // 3][i % 3].plot(rot_sphere_c[0] + (sphere_r * np.sin(phi)), sphere_c[2] + (sphere_r * np.cos(phi)),
                                    '--', color=(0.0, 0.8, 0.0))
+            ax[i // 3][i % 3].plot((rot_sphere_c[0],), (sphere_c[2],), '.', color=(0.0, 0.8, 0.0))
             ax[i // 3][i % 3].plot((0.0,), (CoM[2],), '.', color=(1.0, 0.0, 1.0))
             ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
                                                 f'{sphere_angles[idx + (N_azi // 2)]:.1f}' +
@@ -224,7 +228,8 @@ def main() -> None:
     log_file.write(' Time-averaged anisotropic spherical cap\n')
     log_file.write('-----------------------------------------\n\n')
     log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
-    log_file.write(f'Best-fit sphere z-height = {sphere_z} [A]\n')
+    log_file.write(f'Best-fit sphere z-height = {sphere_c[2]} [A]\n')
+    log_file.write(f'Best-fit sphere xy-coords = ({sphere_c[0]}, {sphere_c[1]}) [A]\n')
     log_file.write(f'Best-fit sphere radius = {sphere_r} [A]\n')
     log_file.write(f'Best-fit sphere contact angle = {np.mean(sphere_angles)} [deg]\n')
     log_file.write(f'Best-fit sphere sheet-intersecting radius = {np.mean(sphere_intersections[:,0])} [A]\n\n')

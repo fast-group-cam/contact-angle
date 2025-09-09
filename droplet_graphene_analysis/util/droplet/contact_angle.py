@@ -209,20 +209,68 @@ def find_droplet_foot(
 
 #==================================================================================================
 
+def _find_sphere_pts(
+        waters: np.ndarray,
+        cell_params: np.ndarray,
+        mean_heightmap: Callable[..., Any], *,
+        N_pts: int = N_SPHERE_PTS
+    ) -> np.ndarray:
+    """Internal function for finding points on the spherical cap."""
+
+    # Calculate droplet CoM
+    CoM = np.mean(waters, axis=(0, 1)) if len(waters.shape) == 3 else np.mean(waters, axis=0)
+
+    # Calculate largest distance that mean_heightmap is defined on
+    max_r = min(cell_params[0] / 2, cell_params[1] / 2)
+
+    # Generate search directions
+    phi = np.linspace(0, 2 * np.pi, N_pts, endpoint=False)
+    azi = np.c_[np.cos(phi), np.sin(phi)]
+    polarc = np.random.random(N_pts)
+    polars = np.sqrt(1.0 - (polarc**2))
+    sphere_pts = list()
+    warning_occurred = 0
+
+    # Find points on the spherical cap, making sure that search directions do not intersect the
+    # heightmap
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error')
+        for i in range(N_pts):
+            try:
+                test_r = np.linspace(max_r / N_pts, max_r, N_pts, endpoint=False)
+                test_z = mean_heightmap(test_r[:,None] * azi[None,i,:])
+                safe_gradient = np.max((test_z - CoM[2]) / test_r)
+                if safe_gradient >= 0.0 and polarc[i] < polars[i] * safe_gradient:
+                    polars[i] = 1.0 / np.sqrt(1.0 + (safe_gradient**2))
+                    polarc[i] = np.sqrt(1.0 - (polars[i]**2))
+                search_dir = np.array((azi[i,0] * polars[i], azi[i,1] * polars[i], polarc[i]))
+                sphere_pts.append(find_interface(waters, CoM, search_dir))
+            except RuntimeWarning:
+                warning_occurred += 1
+    
+    if warning_occurred > 0:
+        warnings.warn(f'find_spherical_cap: RuntimeWarning raised {warning_occurred} times(s) ' +
+                      'by find_interface', RuntimeWarning)
+    return np.array(sphere_pts)
+    
+#==================================================================================================
+
 def find_spherical_cap(
         waters: np.ndarray,
+        cell_params: np.ndarray,
         mean_heightmap: Callable[..., Any], *,
-        N_pts: int = N_SPHERE_PTS,
-        get_intersection: bool = True
+        N_pts: int = N_SPHERE_PTS
     ) -> tuple[np.ndarray, np.ndarray]:
     """Finds the spherical cap, defined as the best-fit sphere for a series of points on the far
-    time-averaged Willard-Chandler interface.
+    time-averaged Willard-Chandler interface. This version assumes rotational symmetry.
 
     Parameters
     ----------
     waters : ndarray
         The Cartesian coordinates of the water molecules, with shape (N_frames, N_water, 3) for a
         collection of frames, representing the water droplet.
+    cell_params : array_like
+        The cell parameters, expressed as [cell_x, cell_y, cell_z].
     mean_heightmap : function (..., 2) -> (...)
         The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
         be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
@@ -231,9 +279,6 @@ def find_spherical_cap(
     N_pts : int, optional
         The number of sampling points to fit the sphere onto; also used for averaging the heightmap
         azimuthally to enforce rotational symmetry. Defaults to 100.
-    get_intersection : bool, optional
-        If true, returns the radius and contact angle at the contact line/circle, else said fields
-        will be missing from the output dictionary. Defaults to True.
 
     Returns
     -------
@@ -241,52 +286,17 @@ def find_spherical_cap(
         A dictionary indicating the properties of the best-fit sphere, with the following fields:
             - 'r': float, the radius of the sphere
             - 'z': float, the z-coordinate of the center of the sphere
-            - 'a': float, the radius of the contact line/circle (only if get_intersection is true)
-            - 'angle': float, the contact angle (only if get_intersection is true)
+            - 'a': float, the radius of the contact line/circle
+            - 'angle': float, the contact angle
     """
 
-    # Calculate droplet CoM
+    # Find points on the spherical cap
     CoM = np.mean(waters, axis=(0, 1)) if len(waters.shape) == 3 else np.mean(waters, axis=0)
-
-    # Search start point is CoM, unless it is below the mean_heightmap
-    search_start = CoM
-    phi = np.linspace(0, 2 * np.pi, max(N_pts // 3, 10), endpoint=False)
-    search_dirs = np.c_[np.cos(phi), np.sin(phi), np.zeros(max(N_pts // 3, 10))]
-    sphere_pts = list()
-    warning_occurred = 0
-    with warnings.catch_warnings():
-        warnings.filterwarnings('error')
-        for search_dir in search_dirs:
-            try:
-                sphere_pts.append(find_interface(waters, search_start, search_dir))
-            except RuntimeWarning:
-                warning_occurred += 1
-    sphere_pts = np.array(sphere_pts)
-    heightmap_highest_height = np.max(mean_heightmap(sphere_pts[:,0:2]))
-    if search_start[2] < heightmap_highest_height:
-        search_start[2] = heightmap_highest_height
-
-    # Generate search directions and find points on the spherical cap
     phi = np.linspace(0, 2 * np.pi, N_pts, endpoint=False)
     azi = np.c_[np.cos(phi), np.sin(phi)]
-    polarc = np.random.random(N_pts)
-    polars = np.sqrt(1.0 - (polarc**2))
-    search_dirs = np.c_[azi[:,0] * polars, azi[:,1] * polars, polarc]
-    sphere_pts = list()
-    with warnings.catch_warnings():
-        warnings.filterwarnings('error')
-        for search_dir in search_dirs:
-            try:
-                sphere_pts.append(find_interface(waters, search_start, search_dir))
-            except RuntimeWarning:
-                warning_occurred += 1
-    sphere_pts = np.array(sphere_pts)
+    sphere_pts = _find_sphere_pts(waters, cell_params, mean_heightmap, N_pts=N_pts)
 
-    if warning_occurred > 0:
-        warnings.warn(f'find_spherical_cap: RuntimeWarning raised {warning_occurred} times(s) ' +
-                      'by find_interface', RuntimeWarning)
-
-    # Least-squares best-fit sphereical cap constrained on z-axis
+    # Least-squares best-fit spherical cap constrained on z-axis
     A_mat = np.empty((sphere_pts.shape[0], 2), dtype=float)
     A_mat[:,0] = 2 * sphere_pts[:,-1]
     A_mat[:,1] = 1
@@ -295,9 +305,6 @@ def find_spherical_cap(
     c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec, rcond=None)
     sphere_r = np.sqrt(np.sum(np.square(c_vec[0,0])) + c_vec[1,0])
     sphere_z = c_vec[0,0]
-    
-    if not get_intersection:
-        return {'r': sphere_r, 'z': sphere_z}
 
     # Iteratively solve for contact point
     with warnings.catch_warnings():
@@ -318,3 +325,57 @@ def find_spherical_cap(
             sphere_angle = (180.0 if sphere_z > 0.0 else 0.0)
 
     return {'r': sphere_r, 'z': sphere_z, 'a': sphere_a, 'angle': sphere_angle}
+
+#==================================================================================================
+
+def find_spherical_cap_aniso(
+        waters: np.ndarray,
+        cell_params: np.ndarray,
+        mean_heightmap: Callable[..., Any], *,
+        N_pts: int = N_SPHERE_PTS
+    ) -> tuple[np.ndarray, np.ndarray]:
+    """Finds the spherical cap, defined as the best-fit sphere for a series of points on the far
+    time-averaged Willard-Chandler interface. This version makes minimal assumptions on rotational
+    symmetry, and therefore does not report the intersecting contact line.
+
+    Parameters
+    ----------
+    waters : ndarray
+        The Cartesian coordinates of the water molecules, with shape (N_frames, N_water, 3) for a
+        collection of frames, representing the water droplet.
+    cell_params : array_like
+        The cell parameters, expressed as [cell_x, cell_y, cell_z].
+    mean_heightmap : function (..., 2) -> (...)
+        The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
+        be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
+        shape (..., 2) and returning the appropriate scalars, with domain spanning -cell_x/2 to
+        cell_x/2 along the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
+    N_pts : int, optional
+        The number of sampling points to fit the sphere onto; also used for averaging the heightmap
+        azimuthally to enforce rotational symmetry. Defaults to 100.
+    get_intersection : bool, optional
+        If true, returns the radius and contact angle at the contact line/circle, else said fields
+        will be missing from the output dictionary. Defaults to True.
+
+    Returns
+    -------
+    sphere_fit : dict
+        A dictionary indicating the properties of the best-fit sphere, with the following fields:
+            - 'r': float, the radius of the sphere
+            - 'c': ndarray of shape (3,), the coordinates of the center of the sphere
+    """
+
+    # Find points on the spherical cap
+    sphere_pts = _find_sphere_pts(waters, cell_params, mean_heightmap, N_pts=N_pts)
+
+    # Least-squares best-fit spherical cap with no constraint
+    A_mat = np.empty((sphere_pts.shape[0], 4), dtype=float)
+    A_mat[:,0:3] = 2 * sphere_pts
+    A_mat[:,3] = 1
+    f_vec = np.empty((sphere_pts.shape[0], 1), dtype=float)
+    f_vec[:,0] = np.sum(sphere_pts**2, axis=-1)
+    c_vec, _, _, _ = np.linalg.lstsq(A_mat, f_vec, rcond=None)
+    sphere_r = np.sqrt(np.sum(np.square(c_vec[0:3,0])) + c_vec[3,0])
+    sphere_c = c_vec[0:3,0]
+    
+    return {'r': sphere_r, 'c': sphere_c}
