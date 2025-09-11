@@ -1,8 +1,8 @@
 from .coarse_grain import *
 import numpy as np
-from typing import Any, Callable
 from matplotlib.axes import Axes
 from matplotlib.artist import Artist
+from ..interpolate import PeriodicGridInterpolator
 
 #==================================================================================================
 
@@ -257,7 +257,7 @@ def update_density_xz_slice(
 
 def plot_density_radially_symmetric(
         waters: np.ndarray,
-        mean_heightmap: Callable[..., Any],
+        mean_heightmap: PeriodicGridInterpolator,
         axis: Axes,
         n_plot_bins: int = 80,
         n_azi: int = 100, *,
@@ -274,11 +274,10 @@ def plot_density_radially_symmetric(
     waters : ndarray
         The Cartesian coordinates of the water molecules, with shape (N_frames, N_water, 3) for a
         collection of frames; the density distribution is averaged over the frames.
-    mean_heightmap : function (..., 2) -> (...)
+    mean_heightmap : PeriodicGridInterpolator
         The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
-        be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
-        shape (..., 2) and returning the appropriate scalars, with domain spanning -cell_x/2 to
-        cell_x/2 along the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
+        be supplied as a PeriodicGridInterpolator with domain spanning -cell_x/2 to cell_x/2 along
+        the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
     axis : Axes
         The MatPlotLib Axes object to plot onto.
     n_plot_bins : int, optional

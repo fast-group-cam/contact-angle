@@ -7,7 +7,7 @@ prog_desc_header = '''
  either a time evolution or a single snapshot of a water droplet (rotationally symmetric about the
  z-axis) on a graphene sheet aligned aligned to the xy plane. Use as:
 
- >    python droplet_diffusion.py <input_file(s)> [-o <output_file>] [--index <index>]
+ >    python droplet_diffusion.py <input_file(s)> [-o <output_dir>] [--index <index>]
           [--max_tau <max_tau>] [--delta_t <delta_t>] [--no-display]
 
  The program tracks the motion of the droplet's CoM across the xy plane, and calculates the
@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 
 from rich.console import Console
 from rich.progress import track
+from droplet_graphene_analysis import __version__
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
 
 def main() -> None:
@@ -39,8 +40,8 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_file', nargs='+',
                         help='input file(s) to read data from')
-    parser.add_argument('-o', '--output', default='droplet-diffusion.png', dest='output',
-                        help='output filename to save the plot to')
+    parser.add_argument('-o', '--output', default='droplet-diffusion', dest='output_dir',
+                        help='output folder to save results and graphical outputs to')
     parser.add_argument('--index', default=':', dest='index',
                         help='slice of indices to take from each input file')
     parser.add_argument('-t', '--max_tau', type=int, default=30, dest='max_tau',
@@ -54,8 +55,8 @@ def main() -> None:
     for file in args.input_file:
         if not os.path.isfile(file):
             raise RuntimeError(f'File "{file}" not found.')
-    if os.path.isfile(args.output):
-        os.remove(args.output)
+    if not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
 
     if args.max_tau < 2:
         raise RuntimeError(f'Max tau ({args.max_tau}) must be at least 2.')
@@ -100,13 +101,17 @@ def main() -> None:
 
     tau_range = np.arange(max_tau) * args.delta_t
     fit_y = autocorr[1:] / tau_range[1:]
-    fit_p = np.polyfit(tau_range[1:], fit_y, deg=1)
+    fit_p, fit_cov = np.polyfit(tau_range[1:], fit_y, deg=1, cov=True)
     if fit_p[0] >= 0.0:
         drift_vel = np.sqrt(fit_p[0])
+        drift_vel_unc = np.power(fit_cov[0,0], 0.25)
         diffusion = fit_p[1] / 4
+        diffusion_unc = np.sqrt(fit_cov[1,1]) / 4
     else:
         drift_vel = 0.0
+        drift_vel_unc = 0.0
         diffusion = np.mean(fit_y) / 4
+        diffusion_unc = np.std(fit_y) / (4 * np.sqrt(max_tau - 2))
 
     console.print(f'Calculated autocorrelations in [green]{elapsed_time(time_start_1)}[/green].')
 
@@ -148,10 +153,31 @@ def main() -> None:
                    ha='left', va='top')
     
     fig.tight_layout()
-    fig.savefig(args.output, dpi=(3*fig.dpi), bbox_inches='tight', pad_inches=0.05)
-    console.print(f'Program completed in [green]{elapsed_time(time_start_0)}[/green].')
+    fig.savefig(os.path.join(args.output_dir, 'droplet-diffusion.png'), dpi=(3*fig.dpi),
+                bbox_inches='tight', pad_inches=0.05)
     if args.opt_display:
         plt.show()
+
+    #----------------------------------------------------------------------------------------------
+    # Write results
+
+    final_elapsed_time = elapsed_time(time_start_0)
+    results_file = open(os.path.join(args.output_dir, 'results.ini'), 'w', encoding='utf-8')
+    results_file.write('[General]\n')
+    results_file.write(f'No. of frames = {N_frames}\n\n')
+    results_file.write('[Diffusion]\n')
+    results_file.write(f'Drift velocity [A/ps] = {drift_vel}\n')
+    results_file.write(f'Drift velocity uncertainty [A/ps] = {drift_vel_unc}\n')
+    results_file.write(f'Diffusion coefficient [A^2/ps] = {diffusion}\n')
+    results_file.write(f'Diffusion coefficient uncertainty [A^2/ps] = {diffusion_unc}\n\n')
+    results_file.write('[Misc]\n')
+    results_file.write('Program type = droplet_diffusion\n')
+    results_file.write(f'Program version = {__version__}\n')
+    results_file.write(f'Program wall time = {final_elapsed_time}\n')
+    results_file.close()
+    
+    console.print(f'Program completed in [green]{final_elapsed_time}[/green].')
+
 
 #==================================================================================================
 # Run from src

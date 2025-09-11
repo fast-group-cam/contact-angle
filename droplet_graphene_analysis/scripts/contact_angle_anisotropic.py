@@ -2,8 +2,8 @@
 
 prog_desc_header = '''
 ===================================================================================================
- A variation of the contact_angle program, which calculates only the time-averaged spherical cap
- angle, but in a generally anisotropic manner. Use as:
+ A variation of the contact_angle program, which calculates the spherical profile in a generally
+ anisotropic manner. Use as:
 
  >    python contact_angle_anisotropic.py <input_file(s)> [--index <index>]
           [--N_azimuths <N_azimuths] [-o <output_dir>] [--no-graphics]
@@ -25,12 +25,13 @@ import matplotlib.pyplot as plt
 
 from rich.console import Console
 from rich.progress import track
-from scipy.interpolate import RegularGridInterpolator
+from droplet_graphene_analysis import __version__
 from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+from droplet_graphene_analysis.util.interpolate import PeriodicGridInterpolator
 from droplet_graphene_analysis.util.droplet import find_interface
 from droplet_graphene_analysis.util.droplet.contact_angle import find_spherical_cap_aniso
 from droplet_graphene_analysis.util.droplet.plot import plot_density_xz_slice
-from droplet_graphene_analysis.util.graphene import regularized_heightmap
+from droplet_graphene_analysis.util.graphene import raw_heightmap
 
 def main() -> None:
 
@@ -58,7 +59,7 @@ def main() -> None:
     parser.add_argument('--N_azimuths', type=int, default=N_AZIMUTHS, dest='N_azimuths',
                         help='number of azimuthal angles to analyze per frame')
     parser.add_argument('-o', '--output', default='contact-angle-aniso', dest='output_dir',
-                        help='output folder to save log and graphical outputs to')
+                        help='output folder to save results and graphical outputs to')
     parser.add_argument('--no-graphics', action='store_true', dest='no_graphics',
                         help='disables rendering of graphics (and speeds up the script)')
     args = parser.parse_args()
@@ -109,11 +110,9 @@ def main() -> None:
     sheet_Ny = int(np.ceil(6.0 * cell_params[1] / CARBON_RADIUS))
     sheet_dx = cell_params[0] / sheet_Nx
     sheet_dy = cell_params[1] / sheet_Ny
-    sheet_gridx = np.linspace((sheet_dx - cell_params[0]) / 2.0, (cell_params[0] - sheet_dx) / 2.0, sheet_Nx)
-    sheet_gridy = np.linspace((sheet_dy - cell_params[1]) / 2.0, (cell_params[1] - sheet_dy) / 2.0, sheet_Ny)
     sheets = np.empty((N_frames, sheet_Nx, sheet_Ny), dtype=float)
     for f in progress_bar_iter(N_frames, 'Processing graphene sheet...'):
-        sheets[f] = regularized_heightmap(carbons[f], cell_params[0:2], (sheet_Nx, sheet_Ny))
+        sheets[f] = raw_heightmap(carbons[f], cell_params[0:2], (sheet_Nx, sheet_Ny))
     central_sheet_height = np.mean(sheets, axis=0)[sheet_Nx // 2, sheet_Ny // 2]
 
     CoM = np.mean(waters, axis=(0,1))
@@ -124,17 +123,16 @@ def main() -> None:
     #----------------------------------------------------------------------------------------------
     # Create output log file
 
-    log_file = open(os.path.join(args.output_dir, 'log.txt'), 'w', encoding='utf-8')
-    log_file.write('-------------------------\n')
-    log_file.write(' General\n')
-    log_file.write('-------------------------\n\n')
-    log_file.write(f'No. of frames = {N_frames}\n')
-    log_file.write(f'No. of water molecules = {N_water}\n\n')
-    log_file.write(f'Droplet roof = {droplet_roof} [A]\n')
-    log_file.write(f'Droplet floor = {droplet_floor} [A]\n')
-    log_file.write(f'Graphene sheet z at origin = {central_sheet_height} [A]\n\n')
-    log_file.write(f'Droplet height = {droplet_roof - droplet_floor} [A]\n')
-    log_file.write(f'Nominal interfacial separation = {droplet_floor - central_sheet_height} [A]\n\n')
+    results_file = open(os.path.join(args.output_dir, 'results.ini'), 'w', encoding='utf-8')
+    results_file.write('[General]\n')
+    results_file.write(f'No. of frames = {N_frames}\n')
+    results_file.write(f'No. of water molecules = {N_water}\n')
+    results_file.write(f'Droplet roof [A] = {droplet_roof}\n')
+    results_file.write(f'Droplet floor [A] = {droplet_floor}\n')
+    results_file.write(f'Droplet CoM z-coordinate [A] = {CoM[2]}\n')
+    results_file.write(f'Graphene sheet z at origin [A] = {central_sheet_height}\n')
+    results_file.write(f'Droplet height [A] = {droplet_roof - droplet_floor}\n')
+    results_file.write(f'Nominal interfacial separation [A] = {droplet_floor - central_sheet_height}\n\n')
 
     #----------------------------------------------------------------------------------------------
     # Calculate time-averaged interface across all frames
@@ -143,15 +141,15 @@ def main() -> None:
     with console.status('[green]Computing time-averaged interface...'):
 
         mean_sheet = np.mean(sheets, axis=0)
-        mean_heightmap = RegularGridInterpolator((sheet_gridx, sheet_gridy), mean_sheet)
+        mean_heightmap = PeriodicGridInterpolator(cell_params[0:2], mean_sheet)
         dh_dx = (np.roll(mean_sheet, -1, axis=0) - np.roll(mean_sheet, 1, axis=0)) / (2 * sheet_dx)
         dh_dy = (np.roll(mean_sheet, -1, axis=1) - np.roll(mean_sheet, 1, axis=1)) / (2 * sheet_dy)
-        dh_dx = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dx)
-        dh_dy = RegularGridInterpolator((sheet_gridx, sheet_gridy), dh_dy)
+        dh_dx = PeriodicGridInterpolator(cell_params[0:2], dh_dx)
+        dh_dy = PeriodicGridInterpolator(cell_params[0:2], dh_dy)
 
-        sphere_results = find_spherical_cap_aniso(waters, cell_params, mean_heightmap)
-        sphere_r = sphere_results['r']
-        sphere_c = sphere_results['c']
+        spherical_cap = find_spherical_cap_aniso(waters, cell_params, mean_heightmap)
+        sphere_r = spherical_cap['r']
+        sphere_c = spherical_cap['c']
 
         azi = np.linspace(0, 2 * np.pi, N_azi, endpoint=False)
         search_directions = np.c_[np.cos(azi), np.sin(azi)]
@@ -224,18 +222,16 @@ def main() -> None:
         console.print('Plotted time-averaged density functions in ' +
                     f'[green]{elapsed_time(time_start_1)}[/green].')
 
-    log_file.write('-----------------------------------------\n')
-    log_file.write(' Time-averaged anisotropic spherical cap\n')
-    log_file.write('-----------------------------------------\n\n')
-    log_file.write(f'Center-of-mass z-height = {CoM[2]} [A]\n')
-    log_file.write(f'Best-fit sphere z-height = {sphere_c[2]} [A]\n')
-    log_file.write(f'Best-fit sphere xy-coords = ({sphere_c[0]}, {sphere_c[1]}) [A]\n')
-    log_file.write(f'Best-fit sphere radius = {sphere_r} [A]\n')
-    log_file.write(f'Best-fit sphere contact angle = {np.mean(sphere_angles)} [deg]\n')
-    log_file.write(f'Best-fit sphere sheet-intersecting radius = {np.mean(sphere_intersections[:,0])} [A]\n\n')
-    log_file.write(f'Dist. of sphere contact angles, min = {np.min(sphere_angles)} [deg]\n')
-    log_file.write(f'Dist. of sphere contact angles, max = {np.max(sphere_angles)} [deg]\n')
-    log_file.write(f'Dist. of sphere contact angles, std = {np.std(sphere_angles)} [deg]\n\n')
+    results_file.write('[Time-Averaged Interface]\n')
+    results_file.write(f'Contact angle [deg] = {np.mean(sphere_angles)}\n')
+    results_file.write(f'Three-phase line radius [A] = {np.mean(sphere_intersections[:,0])}\n')
+    results_file.write(f'Best-fit sphere radius [A] = {sphere_r}\n')
+    results_file.write(f'Best-fit sphere z-height [A] = {sphere_c[2]}\n')
+    results_file.write(f'Best-fit sphere x-coords [A] = {sphere_c[0]}\n')
+    results_file.write(f'Best-fit sphere y-coords [A] = {sphere_c[1]}\n')
+    results_file.write(f'Dist. of contact angles, min [deg] = {np.min(sphere_angles)}\n')
+    results_file.write(f'Dist. of contact angles, max [deg] = {np.max(sphere_angles)}\n')
+    results_file.write(f'Dist. of contact angles, std [deg] = {np.std(sphere_angles)}\n\n')
 
     np.save(os.path.join(args.output_dir, 'sphere_angles.npy'), sphere_angles)
         
@@ -243,14 +239,13 @@ def main() -> None:
     # End of program
 
     final_elapsed_time = elapsed_time(time_start_0)
+    results_file.write('[Misc]\n')
+    results_file.write('Program type = contact_angle_anisotropic\n')
+    results_file.write(f'Program version = {__version__}\n')
+    results_file.write(f'Program wall time = {final_elapsed_time}\n')
+    results_file.close()
 
-    log_file.write('-------\n')
-    log_file.write(' Misc.\n')
-    log_file.write('-------\n\n')
-    log_file.write(f'Program wall time = {final_elapsed_time}\n\n')
-    log_file.close()
-
-    print(f'Program completed in {final_elapsed_time}.')
+    console.print(f'Program completed in [green]{final_elapsed_time}[/green].')
     sys.exit()
 
 #==================================================================================================

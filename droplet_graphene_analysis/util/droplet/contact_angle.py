@@ -1,7 +1,7 @@
 import numpy as np
 import warnings
 from typing import Any, Callable
-from scipy.interpolate import RegularGridInterpolator
+from ..interpolate import PeriodicGridInterpolator
 from .coarse_grain import find_interface, DEFAULT_TOLERANCE
 
 #==================================================================================================
@@ -10,7 +10,7 @@ from .coarse_grain import find_interface, DEFAULT_TOLERANCE
 Z_FOOT = 5.0          # Height of the droplet foot (in angstroms)
 STEP_BACK = 10.0      # Step back per iteration of foot-finding algorithm (in angstroms)
 MAX_ITER = 10         # Maximum number of iteration for foot-finding algorithm
-N_SPHERE_PTS = 100    # Number of points to use to find best-fit spherical top
+N_SPHERE_PTS = 150    # Number of points to use to find best-fit spherical top
 
 #==================================================================================================
 
@@ -45,19 +45,19 @@ def find_sheet_normal(
     # Process input shapes and calculate CoM
     if len(waters.shape) == 3:
         if len(heightmaps.shape) != 3:
-            raise RuntimeError(f'Unrecognized shape of heightmaps: {heightmaps.shape}')
+            raise ValueError(f'Unrecognized shape of heightmaps: {heightmaps.shape}')
         if heightmaps.shape[0] != waters.shape[0]:
-            raise RuntimeError(f'Shape of heightmaps {heightmaps.shape} does not match waters ' +
-                               f'{waters.shape}!')
+            raise ValueError(f'Shape of heightmaps {heightmaps.shape} does not match waters ' +
+                             f'{waters.shape}!')
         CoM = np.mean(waters, axis=(0, 1))
     elif len(waters.shape) == 2:
         heightmaps = np.atleast_3d(heightmaps)
         if heightmaps.shape[0] != 1:
-            raise RuntimeError(f'Shape of heightmaps {heightmaps.shape} does not match waters ' +
-                               f'{waters.shape}!')
+            raise ValueError(f'Shape of heightmaps {heightmaps.shape} does not match waters ' +
+                             f'{waters.shape}!')
         CoM = np.mean(waters, axis=0)
     else:
-        raise RuntimeError(f'Unrecognized input shape: waters {waters.shape}')
+        raise ValueError(f'Unrecognized input shape: waters {waters.shape}')
 
     # Prepare interpolation functions for mean heightmap
     _, N_x, N_y = heightmaps.shape
@@ -66,22 +66,20 @@ def find_sheet_normal(
     z = np.mean(heightmaps, axis=0)
     dz_dx = (np.roll(z, -1, axis=0) - np.roll(z, 1, axis=0)) / (2 * d_x)
     dz_dy = (np.roll(z, -1, axis=1) - np.roll(z, 1, axis=1)) / (2 * d_y)
-    x_grid = np.linspace((d_x - cell_xy[0]) / 2.0, (cell_xy[0] - d_x) / 2.0, N_x)
-    y_grid = np.linspace((d_y - cell_xy[1]) / 2.0, (cell_xy[1] - d_y) / 2.0, N_y)
-    z = RegularGridInterpolator((x_grid, y_grid), z)
-    dz_dx = RegularGridInterpolator((x_grid, y_grid), dz_dx)
-    dz_dy = RegularGridInterpolator((x_grid, y_grid), dz_dy)
+    z = PeriodicGridInterpolator(cell_xy[0:2], z)
+    dz_dx = PeriodicGridInterpolator(cell_xy[0:2], dz_dx)
+    dz_dy = PeriodicGridInterpolator(cell_xy[0:2], dz_dy)
 
     # Gradient descent (with smart reduction of descent rate) to minimize distance to CoM
     ratio = 1.0
     point = CoM[0:2]
-    dist_sq = (CoM[2] - z(point))**2
+    dist_sq = (CoM[2] - z(point)[0])**2
     dist_moved = np.inf
     while dist_moved > tol:
-        gradient_x = (CoM[0] - point[0]) + ((CoM[2] - z(point)) * dz_dx(point))
-        gradient_y = (CoM[1] - point[1]) + ((CoM[2] - z(point)) * dz_dy(point))
+        gradient_x = (CoM[0] - point[0]) + ((CoM[2] - z(point)[0]) * dz_dx(point)[0])
+        gradient_y = (CoM[1] - point[1]) + ((CoM[2] - z(point)[0]) * dz_dy(point)[0])
         new_point = point + (ratio * np.array((gradient_x, gradient_y)))
-        new_dist_sq = np.sum((CoM[0:2] - new_point)**2) + (CoM[2] - z(new_point))**2
+        new_dist_sq = np.sum((CoM[0:2] - new_point)**2) + (CoM[2] - z(new_point)[0])**2
         dist_moved = ratio * np.sqrt((gradient_x**2) + (gradient_y**2))
         if new_dist_sq >= dist_sq:
             ratio /= 2
@@ -89,14 +87,14 @@ def find_sheet_normal(
             point = new_point
             dist_sq = new_dist_sq
 
-    sheet_normal = CoM - np.array((point[0], point[1], z(point)))
+    sheet_normal = CoM - np.array((point[0], point[1], z(point)[0]))
     return (sheet_normal / np.linalg.norm(sheet_normal))
 
 #==================================================================================================
 
 def find_droplet_foot(
         waters: np.ndarray,
-        mean_heightmap: Callable[..., Any],
+        mean_heightmap: PeriodicGridInterpolator,
         search_directions: np.ndarray, *,
         tol: float = DEFAULT_TOLERANCE,
         z_foot: float = Z_FOOT,
@@ -112,11 +110,10 @@ def find_droplet_foot(
     waters : ndarray
         The Cartesian coordinates of the water molecules, with shape (N_frames, N_water, 3) for a
         collection of frames, representing the water droplet.
-    mean_heightmap : function (..., 2) -> (...)
+    mean_heightmap : PeriodicGridInterpolator
         The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
-        be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
-        shape (..., 2) and returning the appropriate scalars, with domain spanning -cell_x/2 to
-        cell_x/2 along the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
+        be supplied as a PeriodicGridInterpolator with domain spanning -cell_x/2 to cell_x/2 along
+        the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
     search_directions : ndarray
         The directions to search for the droplet foot(s), with shape (N_dir, 3). Each search
         direction is expected to be in the form of [cos(phi), sin(phi), 0.0].
@@ -212,7 +209,7 @@ def find_droplet_foot(
 def _find_sphere_pts(
         waters: np.ndarray,
         cell_params: np.ndarray,
-        mean_heightmap: Callable[..., Any], *,
+        mean_heightmap: PeriodicGridInterpolator, *,
         N_pts: int = N_SPHERE_PTS
     ) -> np.ndarray:
     """Internal function for finding points on the spherical cap."""
@@ -258,7 +255,7 @@ def _find_sphere_pts(
 def find_spherical_cap(
         waters: np.ndarray,
         cell_params: np.ndarray,
-        mean_heightmap: Callable[..., Any], *,
+        mean_heightmap: PeriodicGridInterpolator, *,
         N_pts: int = N_SPHERE_PTS
     ) -> tuple[np.ndarray, np.ndarray]:
     """Finds the spherical cap, defined as the best-fit sphere for a series of points on the far
@@ -271,11 +268,10 @@ def find_spherical_cap(
         collection of frames, representing the water droplet.
     cell_params : array_like
         The cell parameters, expressed as [cell_x, cell_y, cell_z].
-    mean_heightmap : function (..., 2) -> (...)
+    mean_heightmap : PeriodicGridInterpolator
         The time-averaged regularized heightmap of the graphene sheet <h(x, y)>_t, which should
-        be supplied as a ufunc capable of taking (x, y) coordinates in the form of a ndarray of
-        shape (..., 2) and returning the appropriate scalars, with domain spanning -cell_x/2 to
-        cell_x/2 along the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
+        be supplied as a PeriodicGridInterpolator with domain spanning -cell_x/2 to cell_x/2 along
+        the x-coordinate and -cell_y/2 to cell_y/2 along the y-coordinate.
     N_pts : int, optional
         The number of sampling points to fit the sphere onto; also used for averaging the heightmap
         azimuthally to enforce rotational symmetry. Defaults to 100.
