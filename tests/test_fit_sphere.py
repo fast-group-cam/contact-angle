@@ -1,5 +1,5 @@
 import numpy as np
-from droplet_graphene_analysis.util import best_fit_sphere, best_fit_axial_sphere
+from fast_group_cam.contact_angle_2d.util import best_fit_sphere, best_fit_axial_sphere
 
 #==================================================================================================
 

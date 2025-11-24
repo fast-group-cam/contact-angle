@@ -1,6 +1,6 @@
 import numpy as np
-from droplet_graphene_analysis.util import read_droplet_trajectory
-from droplet_graphene_analysis.util.graphene import *
+from fast_group_cam.contact_angle_2d.util import read_droplet_trajectory
+from fast_group_cam.contact_angle_2d.util.graphene import *
 
 #==================================================================================================
 

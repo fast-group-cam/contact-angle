@@ -1,5 +1,5 @@
 import numpy as np
-from droplet_graphene_analysis.util.interpolate import PeriodicGridInterpolator
+from fast_group_cam.contact_angle_2d.util.interpolate import PeriodicGridInterpolator
 
 #==================================================================================================
 

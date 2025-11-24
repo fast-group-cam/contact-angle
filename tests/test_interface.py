@@ -1,7 +1,7 @@
 import numpy as np
 import ase.io
-import droplet_graphene_analysis.util.droplet.coarse_grain as cg
-from droplet_graphene_analysis.util import center_coordinates
+import fast_group_cam.contact_angle_2d.util.droplet.coarse_grain as cg
+from fast_group_cam.contact_angle_2d.util import center_coordinates
 
 #==================================================================================================
 
