@@ -59,4 +59,4 @@ The infinite-time limit $\mathcal{C}_ {\theta}(\tau\to\infty)$ is of interest fo
 
 ## Author
 
-Darren Wayne Lim (dwl38@cam.ac.uk)
+**Darren Wayne Lim** (dwl38@cam.ac.uk) as part of the **FAST Group, Theory of Condensed Matter, Cavendish Laboratory, Department of Physics, University of Cambridge** (https://www.fast-group.phy.cam.ac.uk/)
