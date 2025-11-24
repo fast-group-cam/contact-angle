@@ -1,11 +1,12 @@
 # contact-angle/droplet-graphene-analysis
 
-A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. All code is written entirely in Python. To use this package and install its dependencies:
+A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. This branch specifically preserves the 0.3.0 version, which was co-developed along the research work in the following paper:
 
-1. Create a Python virtual environment and activate it;
-2. Install this package by running `pip install .` in the repository directory.
+> [awaiting publication]
 
-Afterwards, any of the analysis scripts can be run as `python /path/to/repo/droplet_graphene_analysis/scripts/<script_name.py> [inputs]`, or directly from the command line as just `<script_name> [inputs]`, while the virtual environment is active. The following scripts are available:
+All final results presented in the above paper were processed using this 0.3.0 version. Due to the original scope of the research work, many of the original coding decisions in this package (including its name) focused strictly on the graphene-water system specifically, e.g. hard-coded checks in the I/O module to map unrecognised atoms to carbon, hydrogen, and oxygen.
+
+All code is written entirely in Python. This package and its dependencies can be installed by running `pip install .` in the repository directory. Afterwards, any of the analysis scripts can be run as `python /path/to/repo/droplet_graphene_analysis/scripts/<script_name.py> [inputs]`, or directly from the command line as just `<script_name> [inputs]` if loaded into an active Python virtual environment. The following scripts are available:
 
 - `contact_angle`: measures the contact angle of a water droplet on a graphene sheet from an NVT trajectory, with both instantaneous dynamics and time-averaged macroscopics.
 - `graphene_dynamics`: takes an NVT trajectory of a graphene sheet, and calculates certain observables with regards to local dynamics.
