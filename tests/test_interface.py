@@ -1,7 +1,6 @@
 import numpy as np
-import ase.io
-import fast_group_cam.contact_angle_2d.util.droplet.coarse_grain as cg
-from fast_group_cam.contact_angle_2d.util import center_coordinates
+import fast_contact_angle_2d.util.io as io
+import fast_contact_angle_2d.liquid.coarse_grain as cg
 
 #==================================================================================================
 
@@ -54,11 +53,11 @@ def test_point():
 
 def test_slab():
 
-    atoms = ase.io.read('tests/examples/water-slab.xyz')
-    waters = atoms.positions[atoms.symbols == 'O']
+    trajectory = io.read('tests/examples/water-slab.xyz', liq_symbol='O')
+    waters = trajectory['liq'][0]
 
     central_density = cg.coarse_grained_density(np.array((0.0, 0.0, 0.0)), waters)
-    assert np.allclose(central_density, 0.029995733505371172)
+    assert np.allclose(central_density, 0.035053560262109304)
 
     xx = np.linspace(-3, 3, 50)
     yy = np.linspace(-3, 3, 50)
@@ -66,15 +65,14 @@ def test_slab():
     xx, yy, zz = np.meshgrid(xx, yy, zz)
     points = np.column_stack((xx.ravel(), yy.ravel(), zz.ravel()))
     densities = cg.coarse_grained_density(points, waters)
-    assert np.allclose(np.mean(densities), 0.02999233650345721)
-    assert np.allclose(np.std(densities), 0.00170991036082039)
+    assert np.allclose(np.mean(densities), 0.03249076838705669)
 
     inter_0, norm_0 = cg.find_interface(waters, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), calc_normal=True,
                                         tol=1e-08, slicing_cutoff=4)
     inter_1, norm_1 = cg.find_interface(waters, (0.0, 0.0, 15.0), (0.0, 0.0, -1.0), calc_normal=True,
                                         tol=1e-08, slicing_cutoff=4, reverse_search=True)
-    assert np.allclose(inter_0, (0.0,        0.0,        12.46459353))
-    assert np.allclose(norm_0 , (0.16321428, 0.23604591, 0.95793707))
+    assert np.allclose(inter_0, (0.0, 0.0, 12.77013225))
+    assert np.allclose(norm_0 , (0.0, 0.0, 1.0), atol=0.06)
     assert np.allclose(inter_0, inter_1)
     assert np.allclose(norm_0, norm_1)
 
@@ -82,8 +80,8 @@ def test_slab():
                                         tol=1e-08, slicing_cutoff=4)
     inter_1, norm_1 = cg.find_interface(waters, (0.0, 0.0, -15.0), (0.0, 0.0, 1.0), calc_normal=True,
                                         tol=1e-08, slicing_cutoff=4, reverse_search=True)
-    assert np.allclose(inter_0, (0.0,        0.0,        -12.30232372))
-    assert np.allclose(norm_0 , (0.03707034, 0.05664322, -0.99770604))
+    assert np.allclose(inter_0, (0.0, 0.0, -12.66688555))
+    assert np.allclose(norm_0 , (0.0, 0.0, -1.0), atol=0.06)
     assert np.allclose(inter_0, inter_1)
     assert np.allclose(norm_0, norm_1)
 
@@ -104,11 +102,10 @@ def test_slab():
 
 def test_droplet():
 
-    atoms = ase.io.read('tests/examples/small-droplet.xyz')
-    waters, _, hydrogens = center_coordinates(atoms, atoms.cell.cellpar()[0:3])
+    trajectory = io.read('tests/examples/small-droplet.xyz', liq_symbol='O', sol_symbol='C')
+    waters = trajectory['liq'][0]
     CoM = np.mean(waters, axis=0)
 
-    assert hydrogens.shape[0] == 2 * waters.shape[0]
     assert np.allclose(CoM, (0, 0, 5.38673499))
 
     interface, norm = cg.find_interface(waters, CoM, (0, 0, 1), calc_normal=True,

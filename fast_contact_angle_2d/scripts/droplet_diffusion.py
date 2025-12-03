@@ -2,13 +2,14 @@
 
 prog_desc_header = '''
 ===================================================================================================
- This program measures the diffusive motion of a water droplet on a graphene sheet from a simulated
- trajectory. The input is a file, which must be compatible with ASE's file i/o formats, describing
- either a time evolution or a single snapshot of a water droplet (rotationally symmetric about the
- z-axis) on a graphene sheet aligned aligned to the xy plane. Use as:
+ This program measures the diffusive motion of a liquid droplet on a solid surface from a simulated
+ trajectory. Use as:
 
  >    python droplet_diffusion.py <input_file(s)> [-o <output_dir>] [--index <index>]
-          [--max_tau <max_tau>] [--delta_t <delta_t>] [--no-display]
+          [--sol_symbol <sol_symbol>] [--sol_number <sol_number>] [--liq_symbol <liq_symbol>]
+          [--liq_number <liq_number>] [--max_tau <max_tau>] [--delta_t <delta_t>]
+          [--time_rescale_factor <time_rescale_factor>]
+          [--length_rescale_factor <length_rescale_factor>] [--no-display]
 
  The program tracks the motion of the droplet's CoM across the xy plane, and calculates the
  autocorrelation function to obtain the diffusive motion and drift velocity.
@@ -21,10 +22,8 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from rich.console import Console
-from rich.progress import track
-from droplet_graphene_analysis import __version__
-from droplet_graphene_analysis.util import elapsed_time, read_droplet_trajectory
+import fast_contact_angle_2d.util.io as io
+from fast_contact_angle_2d import __version__, elapsed_time
 
 def main() -> None:
 
@@ -36,7 +35,7 @@ def main() -> None:
         prog_desc += (line.lstrip(' ') + ' ') if line != '' else '\n\n'
     
     parser = argparse.ArgumentParser(prog='droplet_diffusion', description=prog_desc,
-                                     usage='%(prog)s input_file [options]',
+                                     usage='%(prog)s input_file(s) [options]',
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('input_file', nargs='+',
                         help='input file(s) to read data from')
@@ -44,10 +43,22 @@ def main() -> None:
                         help='output folder to save results and graphical outputs to')
     parser.add_argument('--index', default=':', dest='index',
                         help='slice of indices to take from each input file')
-    parser.add_argument('-t', '--max_tau', type=int, default=30, dest='max_tau',
-                        help='maximum timescale to compute autocorrelations (in number of frames)')
-    parser.add_argument('-d', '--delta_t', type=float, default=0.1, dest='delta_t',
-                        help='time interval between frames (in ps)')
+    parser.add_argument('--sol_symbol', type=str, default=None, dest='sol_symbol',
+                        help='atomic symbol to interpret as solid particles')
+    parser.add_argument('--sol_number', type=int, default=None, dest='sol_number',
+                        help='atomic number to interpret as solid particles')
+    parser.add_argument('--liq_symbol', type=str, default=None, dest='liq_symbol',
+                        help='atomic symbol to interpret as liquid particles')
+    parser.add_argument('--liq_number', type=int, default=None, dest='liq_number',
+                        help='atomic number to interpret as liquid particles')
+    parser.add_argument('-t', '--max_tau', type=float, default=3.0, dest='max_tau',
+                        help='maximum timescale to compute autocorrelations (in ps)')
+    parser.add_argument('--delta_t', type=float, default=None, dest='delta_t',
+                        help='time interval between trajectory frames (in ps)')
+    parser.add_argument('--time_rescale_factor', type=float, default=None, dest='time_rescale_factor',
+                        help='rescaling factor for automatically detected timesteps (to get to ps)')
+    parser.add_argument('--length_rescale_factor', type=float, default=1.0, dest='length_rescale_factor',
+                        help='rescaling factor for lengths (to get to angstroms)')
     parser.add_argument('--no-display', action='store_false', dest='opt_display',
                         help='disable display of graphics')
     args = parser.parse_args()
@@ -55,15 +66,15 @@ def main() -> None:
     for file in args.input_file:
         if not os.path.isfile(file):
             raise RuntimeError(f'File "{file}" not found.')
+        
+
     if not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
-
-    if args.max_tau < 2:
-        raise RuntimeError(f'Max tau ({args.max_tau}) must be at least 2.')
-    if args.delta_t <= 0.0:
-        raise RuntimeError(f'Delta t ({args.delta_t}) must be positive.')
-    
-    console = Console(highlight=False)
+        
+    if (args.sol_symbol is None) and (args.sol_number is None):
+        args.sol_symbol = 'C'
+    if (args.liq_symbol is None) and (args.liq_number is None):
+        args.liq_symbol = 'O'
 
     #----------------------------------------------------------------------------------------------
     # Read input file and save coordinates
@@ -72,34 +83,33 @@ def main() -> None:
                 f'{len(args.input_file)} files')
     
     time_start_0 = time.time()
-    with console.status(f'[green]Reading {file_msg}...'):
-        cell_params, _, _, _, trajectory = read_droplet_trajectory(args.input_file,
-                                                                   return_shift_trajectory=True,
-                                                                   index=args.index)
-        cell_xy = cell_params[0:2]
-        N_frames = trajectory.shape[0]
-        traj = trajectory[:,0:2]
-        traj -= cell_xy * np.round(traj / cell_xy)
+    trajectory = io.read(args.input_file, index=args.index, liq_symbol=args.liq_symbol,
+                         sol_symbol=args.sol_symbol, liq_number=args.liq_number,
+                         sol_number=args.sol_number, delta_t=args.delta_t,
+                         time_rescale_factor=args.time_rescale_factor,
+                         length_rescale_factor=args.length_rescale_factor)
+    cell_xy = trajectory['cell_params'][0:2]
+    traj = -trajectory['shifts'][:,0:2]
+    N_frames = traj.shape[0]
+    timestep = trajectory.get('delta_t', 1.0)
 
-    console.print(f'Read [magenta]{N_frames} frames[/magenta] from [cyan]{file_msg}[/cyan] in ' +
-                  f'[green]{elapsed_time(time_start_0)}[/green].')
+    print(f'Read {N_frames} frames from {file_msg} in {elapsed_time(time_start_0)}.')
     
     #----------------------------------------------------------------------------------------------
     # Calculate autocorrelation functions
 
     time_start_1 = time.time()
 
-    max_tau = min(N_frames - 1, args.max_tau)
-    autocorr = np.empty(max_tau, dtype=float)
+    max_interval = min(N_frames - 1, int(args.max_tau / timestep))
+    autocorr = np.empty(max_interval, dtype=float)
     autocorr[0] = 0.0
 
-    for tau in track(range(1, max_tau), description='Calculating autocorrelation functions...',
-                     console=console, transient=True):
+    for tau in range(1, max_interval):
         diffs = traj[tau:] - traj[:-tau]
         diffs -= cell_xy * np.round(diffs / cell_xy)
         autocorr[tau] = np.mean(np.sum(diffs**2, axis=-1))
 
-    tau_range = np.arange(max_tau) * args.delta_t
+    tau_range = np.arange(max_interval) * timestep
     fit_y = autocorr[1:] / tau_range[1:]
     fit_p, fit_cov = np.polyfit(tau_range[1:], fit_y, deg=1, cov=True)
     if fit_p[0] >= 0.0:
@@ -111,9 +121,9 @@ def main() -> None:
         drift_vel = 0.0
         drift_vel_unc = 0.0
         diffusion = np.mean(fit_y) / 4
-        diffusion_unc = np.std(fit_y) / (4 * np.sqrt(max_tau - 2))
+        diffusion_unc = np.std(fit_y) / (4 * np.sqrt(max_interval - 2))
 
-    console.print(f'Calculated autocorrelations in [green]{elapsed_time(time_start_1)}[/green].')
+    print(f'Calculated autocorrelations in {elapsed_time(time_start_1)}.')
 
     #----------------------------------------------------------------------------------------------
     # Display plots
@@ -164,7 +174,8 @@ def main() -> None:
     final_elapsed_time = elapsed_time(time_start_0)
     results_file = open(os.path.join(args.output_dir, 'results.ini'), 'w', encoding='utf-8')
     results_file.write('[General]\n')
-    results_file.write(f'No. of frames = {N_frames}\n\n')
+    results_file.write(f'No. of frames = {N_frames}\n')
+    results_file.write(f'Timestep per frame [ps] = {timestep}\n\n')
     results_file.write('[Diffusion]\n')
     results_file.write(f'Drift velocity [A/ps] = {drift_vel}\n')
     results_file.write(f'Drift velocity uncertainty [A/ps] = {drift_vel_unc}\n')
@@ -176,7 +187,7 @@ def main() -> None:
     results_file.write(f'Program wall time = {final_elapsed_time}\n')
     results_file.close()
     
-    console.print(f'Program completed in [green]{final_elapsed_time}[/green].')
+    print(f'Program completed in {final_elapsed_time}.')
 
 
 #==================================================================================================

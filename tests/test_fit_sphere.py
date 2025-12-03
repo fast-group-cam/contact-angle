@@ -1,5 +1,5 @@
 import numpy as np
-from fast_group_cam.contact_angle_2d.util import best_fit_sphere, best_fit_axial_sphere
+from fast_contact_angle_2d.misc import best_fit_sphere, best_fit_axial_sphere
 
 #==================================================================================================
 

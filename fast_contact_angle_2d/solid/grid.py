@@ -1,6 +1,6 @@
 #==================================================================================================
 # This submodule exists only to ensure a consistent definition of 2D grid points throughout the
-# `graphene` module.
+# `solid` module.
 #==================================================================================================
 
 import numpy as np
@@ -62,3 +62,4 @@ def generate_grid(
     x_coords = np.linspace((d_x - cell_xy[0]) / 2.0, (cell_xy[0] - d_x) / 2.0, N_x)
     y_coords = np.linspace((d_y - cell_xy[1]) / 2.0, (cell_xy[1] - d_y) / 2.0, N_y)
     return np.stack(np.meshgrid(x_coords, y_coords, indexing='ij'), axis=-1)
+

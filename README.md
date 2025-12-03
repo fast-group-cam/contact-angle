@@ -1,6 +1,6 @@
-# fast.contact-angle-2d
+# fast-contact-angle-2d
 
-A Python package for the analysis of liquid droplet contact angles on 2d materials from atomistic simulation trajectories.
+A Python package for the analysis of liquid droplet contact angles on 2D materials from atomistic simulation trajectories, written by the FAST group.
 
 TODO: change everything below...
 

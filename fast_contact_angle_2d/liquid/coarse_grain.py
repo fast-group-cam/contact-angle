@@ -3,7 +3,7 @@ import numpy as np
 from numba import jit
 
 #==================================================================================================
-# Default parameters for Willard-Chandler coarse-graining function
+# Default parameters for Willard-Chandler coarse-graining function for liquid water at 300K
 
 COARSE_GRAIN_LENGTH = 2.4    # Coarse-graining lengthscale (in angstroms)
 CUTOFF_DENSITY = 0.016       # Cutoff density for interface (in angstroms**(-3))
@@ -18,11 +18,11 @@ MAX_SIZE = 1e7               # Maximum size of numpy broadcasting operation (in 
 
 def coarse_grained_density(
         pos: np.ndarray,
-        waters: np.ndarray, *,
+        liq: np.ndarray, *,
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         max_size: int = MAX_SIZE
         ) -> float | np.ndarray:
-    """Calculates the coarse-grained density distribution, given the water molecules' coordinates,
+    """Calculates the coarse-grained density distribution, given the liquid particles' coordinates,
     at either one test point or a list of test points.
 
     Parameters
@@ -30,10 +30,10 @@ def coarse_grained_density(
     pos : ndarray
         Either the test point to calculate the density function at, with shape (3,); or the
         sequence of test points to calculate the density function at, with shape (N_pos, 3).
-    waters : ndarray
-        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
-        single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
-        in which case the density distribution is averaged over the frames.
+    liq : ndarray
+        The Cartesian coordinates of the liquid particles, either with shape (N_liq, 3) for a
+        single instantaneous frame; or shape (N_frames, N_liq, 3) for a collection of frames, in
+        which case the density distribution is averaged over the frames.
     coarse_grain_length : float, optional
         The coarse-graining lengthscale in angstroms. Defaults to 2.4.
     max_size: int, optional
@@ -47,51 +47,51 @@ def coarse_grained_density(
         returned if only one position is supplied.
     """
     
-    if len(waters.shape) == 2:
+    if len(liq.shape) == 2:
         
         prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3)
         scaling = -0.5 / (coarse_grain_length**2)
         chunk_size = max(1, max_size // pos.size)
 
         if len(pos.shape) == 1:
-            return _cg_dens_chunked(np.atleast_2d(pos), waters, prefactor, scaling, chunk_size)[0]
+            return _cg_dens_chunked(np.atleast_2d(pos), liq, prefactor, scaling, chunk_size)[0]
         elif len(pos.shape) == 2:
-            return _cg_dens_chunked(pos, waters, prefactor, scaling, chunk_size)
+            return _cg_dens_chunked(pos, liq, prefactor, scaling, chunk_size)
         else:
-            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), waters, prefactor, scaling,
+            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), liq, prefactor, scaling,
                                     chunk_size).reshape(pos.shape[:-1])
 
-    elif len(waters.shape) == 3:
+    elif len(liq.shape) == 3:
 
-        N_frames = waters.shape[0]
-        flat_waters = waters.reshape(-1, 3)
+        N_frames = liq.shape[0]
+        flat_liq = liq.reshape(-1, 3)
         prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -3) / N_frames
         scaling = -0.5 / (coarse_grain_length**2)
         chunk_size = max(1, max_size // pos.size)
 
         if len(pos.shape) == 1:
-            return _cg_dens_chunked(np.atleast_2d(pos), flat_waters, prefactor, scaling,
+            return _cg_dens_chunked(np.atleast_2d(pos), flat_liq, prefactor, scaling,
                                     chunk_size)[0]
         elif len(pos.shape) == 2:
-            return _cg_dens_chunked(pos, flat_waters, prefactor, scaling, chunk_size)
+            return _cg_dens_chunked(pos, flat_liq, prefactor, scaling, chunk_size)
         else:
-            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), flat_waters, prefactor,
+            return _cg_dens_chunked(pos.reshape(-1, pos.shape[-1]), flat_liq, prefactor,
                                     scaling, chunk_size).reshape(pos.shape[:-1])
         
     else:
-        raise RuntimeError(f'Unregonized input shape for waters {waters.shape}!')
+        raise RuntimeError(f'Unregonized input shape for liq: {liq.shape}')
     
 #--------------------------------------------------------------------------------------------------
 
 @jit('float64[:](float64[:,:], float64[:,:], float64, float64, int32)', nopython=True)
-def _cg_dens_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, scaling: float,
+def _cg_dens_chunked(pos: np.ndarray, liq: np.ndarray, prefactor: float, scaling: float,
                      chunk_size: int = MAX_SIZE):
     result = np.zeros(pos.shape[0])
-    N_waters = waters.shape[0]
-    for start in range(0, N_waters, chunk_size):
-        end = min(start + chunk_size, N_waters)
-        waters_chunk = waters[start:end]
-        disp = waters_chunk[None,:,:] - pos[:,None,:]
+    N_liq = liq.shape[0]
+    for start in range(0, N_liq, chunk_size):
+        end = min(start + chunk_size, N_liq)
+        liq_chunk = liq[start:end]
+        disp = liq_chunk[None,:,:] - pos[:,None,:]
         dist_sq = np.sum(disp**2, axis=-1)
         result += prefactor * np.sum(np.exp(scaling * dist_sq), axis=-1)
     return result
@@ -100,22 +100,22 @@ def _cg_dens_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, scal
 
 def coarse_grained_density_grad(
         pos: np.ndarray,
-        waters: np.ndarray, *,
+        liq: np.ndarray, *,
         coarse_grain_length: float = COARSE_GRAIN_LENGTH,
         max_size: int = MAX_SIZE
         ) -> np.ndarray:
-    """Calculates the gradient of the coarse-grained density distribution, given the water
-    molecules' coordinates, at either one test point or a list of test points.
+    """Calculates the gradient of the coarse-grained density distribution, given the liquid
+    particles' coordinates, at either one test point or a list of test points.
 
     Parameters
     ----------
     pos : ndarray
         Either the test point to calculate the density function at, with shape (3,); or the
         sequence of test points to calculate the density function at, with shape (N_pos, 3).
-    waters : ndarray
-        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
-        single instantaneous frame; or shape (N_frames, N_water, 3) for a collection of frames,
-        in which case the density distribution is averaged over the frames.
+    liq : ndarray
+        The Cartesian coordinates of the liquid particles, either with shape (N_liq, 3) for a
+        single instantaneous frame; or shape (N_frames, N_liq, 3) for a collection of frames, in
+        which case the density distribution is averaged over the frames.
     coarse_grain_length : float, optional
         The coarse-graining lengthscale in angstroms. Defaults to 2.4.
     max_size: int, optional
@@ -129,52 +129,52 @@ def coarse_grained_density_grad(
         of shape (3,) is returned if only one position is supplied.
     """
 
-    if len(waters.shape) == 2:
+    if len(liq.shape) == 2:
         
         prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5)
         scaling = -0.5 / (coarse_grain_length**2)
         chunk_size = max(1, max_size // pos.size)
 
         if len(pos.shape) == 1:
-            return _cg_densgrad_chunked(np.atleast_2d(pos), waters, prefactor, scaling,
+            return _cg_densgrad_chunked(np.atleast_2d(pos), liq, prefactor, scaling,
                                         chunk_size)[0]
         elif len(pos.shape) == 2:
-            return _cg_densgrad_chunked(pos, waters, prefactor, scaling, chunk_size)
+            return _cg_densgrad_chunked(pos, liq, prefactor, scaling, chunk_size)
         else:
-            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), waters, prefactor, scaling,
+            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), liq, prefactor, scaling,
                                         chunk_size).reshape(pos.shape)
 
-    elif len(waters.shape) == 3:
+    elif len(liq.shape) == 3:
 
-        N_frames = waters.shape[0]
-        flat_waters = waters.reshape(-1, 3)
+        N_frames = liq.shape[0]
+        flat_liq = liq.reshape(-1, 3)
         prefactor = np.power(2 * np.pi, -1.5) * np.power(coarse_grain_length, -5) / N_frames
         scaling = -0.5 / (coarse_grain_length**2)
         chunk_size = max(1, max_size // pos.size)
 
         if len(pos.shape) == 1:
-            return _cg_densgrad_chunked(np.atleast_2d(pos), flat_waters, prefactor, scaling,
+            return _cg_densgrad_chunked(np.atleast_2d(pos), flat_liq, prefactor, scaling,
                                         chunk_size)[0]
         elif len(pos.shape) == 2:
-            return _cg_densgrad_chunked(pos, flat_waters, prefactor, scaling, chunk_size)
+            return _cg_densgrad_chunked(pos, flat_liq, prefactor, scaling, chunk_size)
         else:
-            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), flat_waters, prefactor,
+            return _cg_densgrad_chunked(pos.reshape(-1, pos.shape[-1]), flat_liq, prefactor,
                                         scaling, chunk_size).reshape(pos.shape)
         
     else:
-        raise RuntimeError(f'Unregonized input shape for waters {waters.shape}!')
+        raise RuntimeError(f'Unregonized input shape for waters {liq.shape}!')
 
 #--------------------------------------------------------------------------------------------------
 
 @jit('float64[:,:](float64[:,:], float64[:,:], float64, float64, int32)', nopython=True)
-def _cg_densgrad_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, scaling: float,
+def _cg_densgrad_chunked(pos: np.ndarray, liq: np.ndarray, prefactor: float, scaling: float,
                      chunk_size: int = MAX_SIZE):
     result = np.zeros_like(pos)
-    N_waters = waters.shape[0]
-    for start in range(0, N_waters, chunk_size):
-        end = min(start + chunk_size, N_waters)
-        waters_chunk = waters[start:end]
-        disp = waters_chunk[None,:,:] - pos[:,None,:]
+    N_liq = liq.shape[0]
+    for start in range(0, N_liq, chunk_size):
+        end = min(start + chunk_size, N_liq)
+        liq_chunk = liq[start:end]
+        disp = liq_chunk[None,:,:] - pos[:,None,:]
         dist_sq = np.sum(disp**2, axis=-1)
         result += prefactor * np.sum(disp[:,:,:] * np.exp(scaling * dist_sq)[:,:,None], axis=1)
     return result
@@ -182,7 +182,7 @@ def _cg_densgrad_chunked(pos: np.ndarray, waters: np.ndarray, prefactor: float, 
 #==================================================================================================
 
 def find_interface(
-        waters: np.ndarray,
+        liq: np.ndarray,
         search_start: np.ndarray = None,
         axis: np.ndarray = None,
         tol: float = DEFAULT_TOLERANCE,
@@ -193,16 +193,16 @@ def find_interface(
         slicing_cutoff: float = SLICING_CUTOFF,
         reverse_search: bool = False
         ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Finds the Willard-Chandler interface, defined as the isosurface of the coarse-grained
-    density distribution at the cutoff density, given the water molecules' coordinates and a
-    specified search ray.
+    """Finds the liquid interface, defined as the isosurface of the coarse-grained density
+    distribution at the cutoff density, given the liquid particles' coordinates and a specified
+    search ray.
 
     Parameters
     ----------
-    waters : ndarray
-        The Cartesian coordinates of the water molecules, either with shape (N_water, 3) for a
+    liq : ndarray
+        The Cartesian coordinates of the liquid particles, either with shape (N_liq, 3) for a
         single instantaneous frame, in which case the found interface represents an instantaneous
-        interface; or shape (N_frames, N_water, 3) for a collection of frames, in which case the
+        interface; or shape (N_frames, N_liq, 3) for a collection of frames, in which case the
         found interface represents the time-averaged interface.
     search_start: array_like, optional
         The coordinates of the starting point to begin searching from, with shape (3,); the search
@@ -226,11 +226,11 @@ def find_interface(
     Returns
     -------
     inter : ndarray
-        The location of the intersection between the Willard-Chandler interface and the search ray,
-        with shape (3,).
+        The location of the intersection between the liquid interface and the search ray, with
+        shape (3,).
     norm: ndarray, only if `calc_normal` is True
-        The surface normal of the Willard-Chandler interface at the found intersection, oriented
-        to point *out* of the liquid region, with shape (3,).
+        The surface normal of the liquid interface at the found intersection, oriented to point
+        *out* of the liquid region, with shape (3,).
 
     Other Parameters
     ----------------
@@ -240,7 +240,7 @@ def find_interface(
         The cutoff density defining the interface, i.e. the isosurface where the coarse-grained
         density distribution is equal to this cutoff density, in angstrom^-3. Defaults to 0.016.
     slicing_cutoff : float, optional
-        The cutoff distance for slicing the subset of water molecules relevant to the search ray,
+        The cutoff distance for slicing the subset of liquid particles relevant to the search ray,
         in multiples of `coarse_grain_length`; see notes below. Set to None or np.inf to disable
         this slicing. Defaults to 3.5.
     reverse_search : bool, optional
@@ -254,8 +254,8 @@ def find_interface(
     Warns
     -----
     RuntimeWarning
-        If there are no water molecules within the sliced subset; in which case the fallback return
-        value of `inter` is `search_start`, and `norm` is `axis`.
+        If there are no liquid particles within the sliced subset; in which case the fallback
+        return value of `inter` is `search_start`, and `norm` is `axis`.
 
     Notes
     -----
@@ -279,14 +279,14 @@ def find_interface(
     """
 
     # Process water shape and unroll (collate) into a single array
-    if len(waters.shape) == 2 and waters.shape[-1] == 3:
+    if len(liq.shape) == 2 and liq.shape[-1] == 3:
         N_frames = 1
-        waters_unrolled = waters
-    elif len(waters.shape) == 3 and waters.shape[-1] == 3:
-        N_frames = waters.shape[0]
-        waters_unrolled = waters.reshape(-1, 3)
+        liq_unrolled = liq
+    elif len(liq.shape) == 3 and liq.shape[-1] == 3:
+        N_frames = liq.shape[0]
+        liq_unrolled = liq.reshape(-1, 3)
     else:
-        raise RuntimeError(f'Unrecognized input shape: waters {waters.shape}')
+        raise RuntimeError(f'Unrecognized input shape: liq {liq.shape}')
     
     # Establish default parameters
     slice_width = (np.inf if slicing_cutoff is None else (slicing_cutoff * coarse_grain_length))
@@ -295,7 +295,7 @@ def find_interface(
     axis /= np.linalg.norm(axis)
 
     # Shift positions ("sliced") to set search_start as the origin
-    sliced = waters_unrolled - search_start
+    sliced = liq_unrolled - search_start
 
     # Perform slicing to reduce number of molecules to compute
     parallel_components = np.dot(sliced, axis)
