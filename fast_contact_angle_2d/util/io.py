@@ -10,10 +10,10 @@ from ..coordinates import center_coordinates
 
 def read(
         filename: str | PurePath | IO | Iterable,
-        liq_symbol: str = None,
-        sol_symbol: str = None,
-        liq_number: int = None,
-        sol_number: int = None, *,
+        liq_symbol: str | list[str] = None,
+        sol_symbol: str | list[str] = None,
+        liq_number: int | list[int] = None,
+        sol_number: int | list[int] = None, *,
         delta_t: float = None,
         time_rescale_factor: float = None,
         length_rescale_factor: float = 1.0,
@@ -28,16 +28,18 @@ def read(
     ----------
     filename : file, str, list of files, or of str
         The trajectory file, or list of trajectory files, to read from.
-    liq_symbol : str, optional
-        The atomic symbol to identify with liquid particles, following ASE conventions. Mutually
+    liq_symbol : str or list of str, optional
+        The atomic symbol(s) to identify with liquid particles, following ASE conventions. Mutually
         exclusive with `liq_number`.
-    liq_number : int, optional
-        The atomic number to identify with liquid particles. Mutually exclusive with `liq_symbol`.
-    sol_symbol : str, optional
-        The atomic symbol to identify with solid particles, following ASE conventions. Mutually
+    liq_number : int or list of int, optional
+        The atomic number(s) to identify with liquid particles. Mutually exclusive with
+        `liq_symbol`.
+    sol_symbol : str or list of str, optional
+        The atomic symbol(s) to identify with solid particles, following ASE conventions. Mutually
         exclusive with `sol_number`.
-    sol_number : int, optional
-        The atomic number to identify with solid particles. Mutually exclusive with `sol_symbol`.
+    sol_number : int or list of int, optional
+        The atomic number(s) to identify with solid particles. Mutually exclusive with
+        `sol_symbol`.
     **kwargs
         Extra arguments are passed directly to `ase.io.iread`.
 
@@ -151,17 +153,49 @@ def read(
                 
             # Read liquid particles
             if liq_symbol is not None:
-                liq = length_rescale_factor * atoms.positions[atoms.symbols == liq_symbol]
+                if type(liq_symbol) == str:
+                    liq = length_rescale_factor * atoms.positions[atoms.symbols == liq_symbol]
+                elif isinstance(liq_symbol, Iterable):
+                    parts = list()
+                    for sym in liq_symbol:
+                        parts.append(length_rescale_factor * atoms.positions[atoms.symbols == sym])
+                    liq = np.concat(parts, axis=0)
+                else:
+                    liq = length_rescale_factor * atoms.positions[atoms.symbols == liq_symbol]
             elif liq_number is not None:
-                liq = length_rescale_factor * atoms.positions[atoms.numbers == liq_number]
+                if type(liq_number) == int:
+                    liq = length_rescale_factor * atoms.positions[atoms.numbers == liq_number]
+                elif isinstance(liq_number, Iterable):
+                    parts = list()
+                    for num in liq_number:
+                        parts.append(length_rescale_factor * atoms.positions[atoms.numbers == num])
+                    liq = np.concat(parts, axis=0)
+                else:
+                    liq = length_rescale_factor * atoms.positions[atoms.numbers == liq_number]
             else:
                 liq = np.zeros((0, 3), dtype=float)
 
             # Read solid particles
             if sol_symbol is not None:
-                sol = length_rescale_factor * atoms.positions[atoms.symbols == sol_symbol]
+                if type(sol_symbol) == str:
+                    sol = length_rescale_factor * atoms.positions[atoms.symbols == sol_symbol]
+                elif isinstance(sol_symbol, Iterable):
+                    parts = list()
+                    for sym in sol_symbol:
+                        parts.append(length_rescale_factor * atoms.positions[atoms.symbols == sym])
+                    sol = np.concat(parts, axis=0)
+                else:
+                    sol = length_rescale_factor * atoms.positions[atoms.symbols == sol_symbol]
             elif sol_number is not None:
-                sol = length_rescale_factor * atoms.positions[atoms.numbers == sol_number]
+                if type(sol_number) == int:
+                    sol = length_rescale_factor * atoms.positions[atoms.numbers == sol_number]
+                elif isinstance(sol_number, Iterable):
+                    parts = list()
+                    for num in sol_number:
+                        parts.append(length_rescale_factor * atoms.positions[atoms.numbers == num])
+                    sol = np.concat(parts, axis=0)
+                else:
+                    sol = length_rescale_factor * atoms.positions[atoms.numbers == sol_number]
             else:
                 sol = np.zeros((0, 3), dtype=float)
 

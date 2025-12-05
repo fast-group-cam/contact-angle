@@ -62,14 +62,14 @@ def main() -> None:
                         help='index or slice of indices to take from each input file')
     parser.add_argument('-o', '--output', default='contact-angle', dest='output_dir',
                         help='output folder to save results and graphical outputs to')
-    parser.add_argument('--sol_symbol', type=str, default=None, dest='sol_symbol',
-                        help='atomic symbol to interpret as solid particles')
-    parser.add_argument('--sol_number', type=int, default=None, dest='sol_number',
-                        help='atomic number to interpret as solid particles')
-    parser.add_argument('--liq_symbol', type=str, default=None, dest='liq_symbol',
-                        help='atomic symbol to interpret as liquid particles')
-    parser.add_argument('--liq_number', type=int, default=None, dest='liq_number',
-                        help='atomic number to interpret as liquid particles')
+    parser.add_argument('--sol_symbol', type=str, nargs='*', default=None, dest='sol_symbol',
+                        help='atomic symbol(s) to interpret as solid particles')
+    parser.add_argument('--sol_number', type=int, nargs='*', default=None, dest='sol_number',
+                        help='atomic number(s) to interpret as solid particles')
+    parser.add_argument('--liq_symbol', type=str, nargs='*', default=None, dest='liq_symbol',
+                        help='atomic symbol(s) to interpret as liquid particles')
+    parser.add_argument('--liq_number', type=int, nargs='*', default=None, dest='liq_number',
+                        help='atomic number(s) to interpret as liquid particles')
     parser.add_argument('--delta_t', type=float, default=None, dest='delta_t',
                         help='time interval between trajectory frames (in ps)')
     parser.add_argument('--time_rescale_factor', type=float, default=None, dest='time_rescale_factor',

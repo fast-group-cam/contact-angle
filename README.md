@@ -21,23 +21,23 @@ This script measures the contact angle of a liquid droplet on a solid surface, f
 <ins>**Example 1</ins>.** A simulation of water on graphene was performed using ASE, with the trajectory being saved in "trajectory.xyz" every 0.1 ps. To analyze the contact angle in a rotationally-symmetrized manner, the following command can be executed:
 
 ```
-contact_angle trajectory.xyz --liq_symbol='O' --sol_symbol='C' --delta_t=0.1
+contact_angle trajectory.xyz --liq_symbol O --sol_symbol C --delta_t 0.1
 ```
 
 in which case the results will be saved into a folder named "contact-angle".
 
-<ins>**Example 2</ins>.** A simulation of Lennard-Jones fluid on hexagonal boron nitride was performed using LAMMPS, with a timestep of 1 fs, and particle assignments being 1 for the Lennard-Jones fluid, 2 for boron atoms, and 3 for nitrogen atoms. (In this example we will define the "solid surface" using only the boron atoms, as it has a larger van der Waals radius.) The trajectory was saved once every 0.1 ps, i.e. every 100 simulation steps, and broken up into two files "traj_0.lammpstrj" and "traj_1.lammpstrj". Let's say we want to store the results of the contact angle analysis in a subfolder "analysis/angle"; since the .lammpstrj format does not store information about the atomic identity, and only reports timestamps in multiples of the simulation step, we need to specify the particles based on their internal index, and also the rescaling factor to multiply the timesteps by:
+<ins>**Example 2</ins>.** A simulation of Lennard-Jones fluid on hexagonal boron nitride was performed using LAMMPS, with a timestep of 1 fs, and particle assignments being 1 for the Lennard-Jones fluid, 2 for boron atoms, and 3 for nitrogen atoms. The trajectory was saved once every 0.1 ps, i.e. every 100 simulation steps, and broken up into two files "traj_0.lammpstrj" and "traj_1.lammpstrj". Let's say we want to store the results of the contact angle analysis in a subfolder "analysis/angle"; since the .lammpstrj format does not store information about the atomic identity, and only reports timestamps in multiples of the simulation step, we need to specify the particles based on their internal index, and also the rescaling factor to multiply the timesteps by:
 
 ```
-contact_angle traj_0.lammpstrj traj_1.lammpstrj -o='analysis/angle' --liq_number=1 --sol_number=2 --time_rescale_factor=0.001
+contact_angle traj_0.lammpstrj traj_1.lammpstrj -o analysis/angle --liq_number 1 --sol_number 2 3 --time_rescale_factor 0.001
 ```
 
 Alternatively, specifying `--delta_t=0.1` would also work the same for this specific example. The distiction between the `delta_t` and `time_rescale_factor` arguments is that `delta_t` sets the time interval between frames (in picoseconds) directly, which means that the parameter should be adjusted if the trajectory had been saved using a different dumping interval, whereas using the `time_rescale_factor` causes the script to attempt to detect the timestep information from the source file(s), and then multiply the internal units within the source file(s) to convert to picoseconds, which means that (for LAMMPS dump files at least) the correct value of the `time_rescale_factor` parameter depends on the simulation timestep rather than the dumping interval.
 
-<ins>**Example 3</ins>.** A simulation of water on graphene using ASE and saved into "trajectory.xyz" again, but this time the contact angle should be analyzed anisotropically as the droplet is moving with constant velocity across the graphene surface. To save the results into a folder named "contact-angle-aniso", the following command can be executed:
+<ins>**Example 3</ins>.** A simulation of water on hexagonal boron nitride using ASE and saved into "trajectory.xyz", but this time the contact angle should be analyzed anisotropically as the droplet is moving with constant velocity across the membrane. To save the results into a folder named "contact-angle-aniso", the following command can be executed:
 
 ```
-contact_angle trajectory.xyz -o='contact_angle_aniso' --liq_symbol='O' --sol_symbol='C' --delta_t=0.1 --anisotropic
+contact_angle trajectory.xyz -o contact-angle-aniso --liq_symbol O --sol_symbol B N --delta_t 0.1 --anisotropic
 ```
 
 
