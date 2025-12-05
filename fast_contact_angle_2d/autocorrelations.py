@@ -117,34 +117,31 @@ def norm_inf_autocorrelation(
     if largest_tau < 3:
         raise RuntimeError(f'Not enough frames ({largest_tau}) to extrapolate infinite-time autocorrelation!')
 
-    autocorrs = np.zeros((largest_tau,) + functions[0].interp.values.shape)
-    sigma = np.zeros((largest_tau,), dtype=float)
+    autocorrs = np.empty((largest_tau,) + functions[0].interp.values.shape)
+    sigma = np.empty((largest_tau,), dtype=float)
     for f in functions:
         autocorrs[0] += np.square(f.interp.values)
     autocorrs[0] /= N_frames
-    sigma[0] = 1 / N_frames
     for tau in range(1, largest_tau):
         N_parts = N_frames - tau
         for i in range(N_parts):
             autocorrs[tau] += functions[i].interp.values * functions[i + tau].interp.values
         autocorrs[tau] /= N_parts * autocorrs[0]
         sigma[tau] = 1 / N_parts
-    autocorrs[0] = np.ones_like(autocorrs[0])
     
     def exp_curve(x, c, k):
         return (1.0 - c) * np.exp(-k * x) + c
     
-    tau = np.array(range(largest_tau))
+    tau = np.array(range(1, largest_tau))
     norm_inf_autocorr = np.zeros_like(functions[0].interp.values)
     autocorrs = autocorrs.reshape((largest_tau, -1))
     norm_inf_autocorr = norm_inf_autocorr.reshape(-1)
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore')
         for i in range(norm_inf_autocorr.shape[0]):
-            c_guess = min(max(autocorrs[-1, i], 0.0), 1.0)
-            k_guess = min(max((1.0 - c_guess) / np.sum(autocorrs[:,i] - c_guess), 1.0 / largest_tau), 1.0)
             try:
-                popt, _ = curve_fit(exp_curve, tau, autocorrs[:,i], p0=(c_guess, k_guess), sigma=sigma)
+                popt, _ = curve_fit(exp_curve, tau, autocorrs[1:,i], p0=(0.5, 1.0), sigma=sigma[1:],
+                                    bounds=((0.0, 0.0), (1.0, np.inf)))
                 norm_inf_autocorr[i] = min(max(popt[0], 0.0), 1.0)
             except RuntimeError:
                 norm_inf_autocorr[i] = 0.0

@@ -100,7 +100,7 @@ def main() -> None:
 
     time_start_1 = time.time()
 
-    max_interval = min(N_frames - 1, int(args.max_tau / timestep))
+    max_interval = min(N_frames - 1, max(int(args.max_tau / timestep), 5))
     autocorr = np.empty(max_interval, dtype=float)
     autocorr[0] = 0.0
 
@@ -138,7 +138,7 @@ def main() -> None:
     width = 0.6 * extent
 
     scatterplot = ax[0].scatter(traj[:,0], traj[:,1], s=np.linspace(0, 2, N_frames),
-                                c=(np.arange(N_frames) * args.delta_t), cmap='YlGnBu')
+                                c=(np.arange(N_frames) * timestep), cmap='YlGnBu')
     fig.colorbar(scatterplot, ax=ax[0], label=r'$t\,\,[ps]$')
     ax[0].set_title('Droplet CoM trajectory')
     ax[0].set_xlabel(r'$x\,\,[\AA]$')

@@ -208,11 +208,11 @@ def main() -> None:
     
         if not args.no_graphics:
 
+            time_start_1 = time.time()
             fig, ax = plt.subplots(2, 3)
             fig.set_size_inches(15, 5)
             interval = max(int(N_frames * N_liq / 2e5), 1)
 
-            time_start_1 = time.time()
             for i in range(6):
 
                 idx = i * (N_azi // 12)
@@ -229,8 +229,8 @@ def main() -> None:
                 phi_r = np.arctan2(sphere_intersections[idx, 0], sphere_intersections[idx, 1])
                 phi = np.linspace(-phi_l, phi_r, 180, endpoint=True)
                 ax[i // 3][i % 3].plot(rot_sphere_c[0] + (sphere_r * np.sin(phi)), sphere_c[2] + (sphere_r * np.cos(phi)),
-                                    '--', color=(0.0, 0.8, 0.0))
-                ax[i // 3][i % 3].plot((rot_sphere_c[0],), (sphere_c[2],), '.', color=(0.0, 0.8, 0.0))
+                                    '--', color=(0.0, 0.75, 0.0))
+                ax[i // 3][i % 3].plot((rot_sphere_c[0],), (sphere_c[2],), '.', color=(0.0, 0.75, 0.0))
                 ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
                 ax[i // 3][i % 3].text(0.01, 0.99, (r'$\theta_{left}\;=\;' +
                                                     f'{sphere_angles[idx + (N_azi // 2)]:.1f}' +
@@ -243,10 +243,10 @@ def main() -> None:
 
             fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
             fig.tight_layout()
-            fig.savefig(os.path.join(args.output_dir, 'ave_cross_sections.png'), dpi=(3*fig.dpi),
+            fig.savefig(os.path.join(args.output_dir, 'cross_sections.png'), dpi=(3*fig.dpi),
                         bbox_inches='tight', pad_inches=0.05)
             
-            print(f'Plotted time-averaged density functions in {elapsed_time(time_start_1)}.')
+            print(f'Plotted cross-sections of time-averaged density functions in {elapsed_time(time_start_1)}.')
 
         results_file.write('[Time-Averaged Interface]\n')
         results_file.write(f'Contact angle [deg] = {np.mean(sphere_angles)}\n')
@@ -280,7 +280,6 @@ def main() -> None:
         if not args.no_graphics:
             
             time_start_1 = time.time()
-
             fig, ax = plt.subplots()
             fig.set_size_inches(6, 6)
 
@@ -299,10 +298,34 @@ def main() -> None:
             ax.set_ylabel(r'z ($\AA$)')
             ax.set_title('Spherical fit over time-averaged droplet')
 
-            fig.savefig(os.path.join(args.output_dir, 'ave_sphere_fit.png'), dpi=(3*fig.dpi),
+            fig.savefig(os.path.join(args.output_dir, 'radially_symmetrized.png'), dpi=(3*fig.dpi),
                         bbox_inches='tight', pad_inches=0.05)
             
-            print(f'Plotted best-fit sphere in {elapsed_time(time_start_1)}.')
+            print(f'Plotted radially-symmetrized best-fit sphere in {elapsed_time(time_start_1)}.')
+
+            time_start_1 = time.time()
+            fig, ax = plt.subplots(2, 3)
+            fig.set_size_inches(15, 5)
+            interval = max(int(N_frames * N_liq / 2e5), 1)
+            phi = np.linspace(-max_phi, max_phi, 200)
+            for i in range(6):
+                plot_density_xz_slice(liq[::interval], mean_heightmap, ax[i // 3][i % 3],
+                                      azi=(i * 30.0), show_interface=True)
+                ax[i // 3][i % 3].plot(sphere_r * np.sin(phi), sphere_z + (sphere_r * np.cos(phi)),
+                                       '--', color=(0.0, 0.75, 0.0))
+                ax[i // 3][i % 3].plot((0.0,), (sphere_z,), '.', color=(0.0, 0.75, 0.0))
+                ax[i // 3][i % 3].plot((0.0,), (CoM_z,), '.', color=(1.0, 0.0, 1.0))
+                ax[i // 3][i % 3].text(0.99, 0.99, (r'$\theta\;=\;' + f'{sphere_angle:.1f}' +
+                                                    r'\degree$'), ha='right', va='top',
+                                                    transform=ax[i // 3][i % 3].transAxes)
+                ax[i // 3][i % 3].set_title(r'$\varphi\;=\;' + f'{(i * 30.0):.0f}' + r'\degree$')
+
+            fig.suptitle('Azimuthal cross-sections of time-averaged droplet')
+            fig.tight_layout()
+            fig.savefig(os.path.join(args.output_dir, 'cross_sections.png'), dpi=(3*fig.dpi),
+                        bbox_inches='tight', pad_inches=0.05)
+            
+            print(f'Plotted cross-sections of time-averaged density functions in {elapsed_time(time_start_1)}.')
 
         results_file.write('[Time-Averaged Interface]\n')
         results_file.write(f'Contact angle [deg] = {sphere_angle}\n')
@@ -315,7 +338,7 @@ def main() -> None:
 
     final_elapsed_time = elapsed_time(time_start_0)
     results_file.write('[Misc]\n')
-    results_file.write('Program type = contact_angle_isotropic\n')
+    results_file.write('Program type = contact_angle\n')
     results_file.write(f'Program version = {__version__}\n')
     results_file.write(f'Program wall time = {final_elapsed_time}\n')
     results_file.close()
