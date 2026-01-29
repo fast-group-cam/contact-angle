@@ -11,7 +11,7 @@ Afterwards, any of the premade scripts can be run as `python /path/to/repo/fast_
 
 If you use this package, please cite:
 
-> [awaiting publication]
+> Lim D.W., Advincula X.R., Witt W.C., Thiemann F.L., Schran C. (2026). Revealing Strain Effects on the Graphene-Water Contact Angle Using a Machine Learning Potential, *arXiv*:[2601.20134](https://arxiv.org/abs/2601.20134).
 
 
 ## `contact_angle`
