@@ -2,7 +2,7 @@
 
 A repository for the analysis of contact angles and other observables, with regards to water droplets on graphene sheets. This branch specifically preserves the 0.3.0 version, which was co-developed along the research work in the following paper:
 
-> [awaiting publication]
+> Lim D.W., Advincula X.R., Witt W.C., Thiemann F.L., Schran C. (2026). Revealing Strain Effects on the Graphene-Water Contact Angle Using a Machine Learning Potential, *arXiv*:[2601.20134](https://arxiv.org/abs/2601.20134).
 
 All final results presented in the above paper were processed using this 0.3.0 version. Due to the original scope of the research work, many of the original coding decisions in this package (including its name) focused strictly on the graphene-water system specifically, e.g. hard-coded checks in the I/O module to map unrecognised atoms to carbon, hydrogen, and oxygen.
 
